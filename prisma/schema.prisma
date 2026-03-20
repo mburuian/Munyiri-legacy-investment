@@ -1,0 +1,373 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+ 
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL") // make sure this is in your .env file
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  password      String
+  name          String?
+  role          UserRole       @default(DRIVER)
+  phone         String?
+  avatar        String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  sessions      Session[]
+  admin         Admin?
+  driver        Driver?
+  notifications Notification[]
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Admin {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  permissions Json
+  lastLogin   DateTime?
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("admins")
+}
+
+model Driver {
+  id                String     @id @default(cuid())
+  userId            String     @unique
+  licenseNumber     String     @unique
+  status            DriverStatus @default(OFF_DUTY)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  user              User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  assignedVehicle   Vehicle?   @relation("DriverVehicle")
+  trips             Trip[]
+  expenses          Expense[]  @relation("DriverExpenses")
+  performanceMetrics PerformanceMetrics[]
+  alerts            Alert[]
+  incomeLogs        IncomeLog[]
+}
+
+model Vehicle {
+  id            String        @id @default(cuid())
+  plateNumber   String        @unique
+  model         String
+  capacity      Int
+  status        VehicleStatus @default(ACTIVE)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  driverId      String?       @unique
+  driver        Driver?       @relation("DriverVehicle", fields: [driverId], references: [id])
+
+  trips         Trip[]
+  documents     Document[]
+  maintenance   Maintenance[]
+  incomeLogs    IncomeLog[]
+  expenses      Expense[]
+  alerts        Alert[]
+}
+
+model Trip {
+  id            String       @id @default(cuid())
+  vehicleId     String
+  driverId      String
+  startTime     DateTime     @default(now())
+  endTime       DateTime?
+  startLocation String?
+  endLocation   String?
+  distanceKm    Float?
+  startOdometer Int?
+  endOdometer   Int?
+  fare          Float?
+  status        TripStatus   @default(IN_PROGRESS)
+  notes         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  driver        Driver       @relation(fields: [driverId], references: [id])
+  vehicle       Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([driverId])
+  @@index([startTime])
+  @@map("trips")
+}
+
+model Document {
+  id         String       @id @default(cuid())
+  vehicleId  String
+  type       DocumentType
+  name       String
+  fileUrl    String
+  fileKey    String?
+  fileSize   Int?
+  mimeType   String?
+  uploadedAt DateTime     @default(now())
+  expiryDate DateTime?
+  notes      String?
+
+  vehicle    Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([type])
+  @@map("documents")
+}
+
+model Maintenance {
+  id            String            @id @default(cuid())
+  vehicleId     String
+  type          MaintenanceType
+  description   String
+  cost          Float
+  date          DateTime          @default(now())
+  completedAt   DateTime?
+  odometer      Int?
+  performedBy   String?
+  nextDueDate   DateTime?
+  nextDueKm     Int?
+  status        MaintenanceStatus @default(PENDING)
+  notes         String?
+  garageContact String?
+  garageName    String?
+  receipt       String?
+
+  vehicle       Vehicle           @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([status])
+  @@index([date])
+  @@map("maintenance_records")
+}
+
+model IncomeLog {
+  id            String     @id @default(cuid())
+  vehicleId     String
+  driverId      String?
+  amount        Float
+  type          IncomeType @default(TIP)
+  description   String?
+  date          DateTime   @default(now())
+  createdAt     DateTime   @default(now())
+
+  tripStart     DateTime?
+  tripEnd       DateTime?
+  distanceKm    Float?
+  startOdometer Int?
+  endOdometer   Int?
+
+  driver        Driver?    @relation(fields: [driverId], references: [id])
+  vehicle       Vehicle    @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([driverId])
+  @@index([date])
+  @@map("income_logs")
+}
+
+model Expense {
+  id          String          @id @default(cuid())
+  vehicleId   String
+  driverId    String?
+  amount      Float
+  category    ExpenseCategory
+  description String
+  date        DateTime        @default(now())
+  receipt     String?
+  approved    Boolean         @default(false)
+  approvedBy  String?
+  createdAt   DateTime        @default(now())
+
+  driver      Driver?         @relation("DriverExpenses", fields: [driverId], references: [id])
+  vehicle     Vehicle         @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([driverId])
+  @@index([category])
+  @@index([date])
+  @@map("expenses")
+}
+
+model PerformanceMetrics {
+  id             String   @id @default(cuid())
+  driverId       String
+  date           DateTime @default(now())
+  tripsCount     Int      @default(0)
+  totalIncome    Float    @default(0)
+  totalExpenses  Float    @default(0)
+  netProfit      Float    @default(0)
+  fuelEfficiency Float?
+  rating         Float?
+
+  driver         Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@unique([driverId, date])
+  @@index([driverId])
+  @@index([date])
+  @@map("performance_metrics")
+}
+
+model Alert {
+  id          String        @id @default(cuid())
+  vehicleId   String?
+  driverId    String?
+  type        AlertType
+  severity    AlertSeverity @default(MEDIUM)
+  title       String
+  description String
+  dueDate     DateTime?
+  resolved    Boolean       @default(false)
+  resolvedAt  DateTime?
+  resolvedBy  String?
+  createdAt   DateTime      @default(now())
+
+  driver      Driver?       @relation(fields: [driverId], references: [id])
+  vehicle     Vehicle?      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@index([driverId])
+  @@index([resolved])
+  @@index([severity])
+  @@map("alerts")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  type      String?
+  link      String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model DailySummary {
+  id             String   @id @default(cuid())
+  date           DateTime @unique
+  totalVehicles  Int      @default(0)
+  activeVehicles Int      @default(0)
+  totalDrivers   Int      @default(0)
+  activeDrivers  Int      @default(0)
+  totalIncome    Float    @default(0)
+  totalExpenses  Float    @default(0)
+  netProfit      Float    @default(0)
+  tripsCompleted Int      @default(0)
+  fuelConsumed   Float    @default(0)
+  createdAt      DateTime @default(now())
+
+  @@map("daily_summaries")
+}
+
+enum UserRole {
+  ADMIN
+  FLEET_MANAGER
+  DRIVER
+}
+
+enum DriverStatus {
+  ACTIVE
+  OFF_DUTY
+  ON_LEAVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum VehicleStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+  OUT_OF_SERVICE
+}
+
+enum DocumentType {
+  INSURANCE
+  LOG_BOOK
+  LICENSE
+  INSPECTION
+  PHOTO
+  RECEIPT
+  OTHER
+}
+
+enum MaintenanceType {
+  OIL_CHANGE
+  TIRE_ROTATION
+  BRAKE_REPLACEMENT
+  ENGINE_SERVICE
+  TRANSMISSION
+  ELECTRICAL
+  GENERAL_SERVICE
+  INSPECTION
+  ACCIDENT_REPAIR
+  ROUTINE_MAINTENANCE
+  OTHER
+}
+
+enum MaintenanceStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum IncomeType {
+  TIP
+  TRIP_FARE
+  DAILY_REMITTANCE
+  OTHER
+}
+
+enum ExpenseCategory {
+  FUEL
+  MAINTENANCE
+  REPAIRS
+  INSURANCE
+  PARKING
+  TOLLS
+  FINES
+  OTHER
+}
+
+enum AlertType {
+  INSURANCE
+  MAINTENANCE
+  COMPLIANCE
+  DRIVER
+  VEHICLE
+  FINANCIAL
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TripStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}

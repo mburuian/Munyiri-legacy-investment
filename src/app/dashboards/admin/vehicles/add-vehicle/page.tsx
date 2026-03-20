@@ -1,0 +1,1541 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import Image from "next/image";
+import {
+  ArrowLeft,
+  Car,
+  Upload,
+  X,
+  Plus,
+  Calendar,
+  Shield,
+  Wrench,
+  Fuel,
+  Gauge,
+  Palette,
+  Hash,
+  FileText,
+  Camera,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+  Navigation2,
+  Radio,
+  Truck,
+  CreditCard,
+  DollarSign,
+  CalendarDays,
+  IdCard,
+  Info,
+  HelpCircle,
+  Check,
+  AlertTriangle,
+  Image as ImageIcon,
+  File,
+  Trash2,
+  Eye,
+  Download,
+  Maximize2,
+  Minimize2,
+  ChevronLeft,
+  ChevronRight
+} from "lucide-react";
+
+interface FormData {
+  // Basic Information
+  regNumber: string;
+  make: string;
+  model: string;
+  year: number;
+  color: string;
+  chassisNumber: string;
+  engineNumber: string;
+  
+  // Insurance Details
+  insuranceProvider: string;
+  insurancePolicyNo: string;
+  insuranceExpiry: string;
+  insuranceCoverType: string;
+  insurancePremium: number;
+  
+  // License & Registration
+  licenseNumber: string;
+  licenseExpiry: string;
+  registrationDate: string;
+  
+  // Service & Maintenance
+  lastServiceDate: string;
+  lastServiceOdometer: number;
+  nextServiceDate: string;
+  nextServiceOdometer: number;
+  serviceIntervalKm: number;
+  serviceIntervalMonths: number;
+  
+  // Odometer & Fuel
+  currentOdometer: number;
+  fuelType: string;
+  fuelTankCapacity: number;
+  avgFuelConsumption: number;
+  
+  // Financial
+  purchaseDate: string;
+  purchasePrice: number;
+  dailyTarget: number;
+  monthlyTarget: number;
+  
+  // Technical Specs
+  transmission: string;
+  engineCapacity: string;
+  seatingCapacity: number;
+  
+  // Additional
+  notes: string;
+}
+
+// Section progress tracking
+const sections = [
+  { id: 'basic', name: 'Basic Info', icon: Car },
+  { id: 'insurance', name: 'Insurance', icon: Shield },
+  { id: 'license', name: 'License', icon: IdCard },
+  { id: 'service', name: 'Service', icon: Wrench },
+  { id: 'fuel', name: 'Fuel & Tech', icon: Fuel },
+  { id: 'financial', name: 'Financial', icon: CreditCard },
+  { id: 'images', name: 'Images', icon: Camera },
+];
+
+export default function AddVehiclePage() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [activeSection, setActiveSection] = useState('basic');
+  const [completedSections, setCompletedSections] = useState<Set<string>>(new Set());
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  
+  // Images state
+  const [mainImage, setMainImage] = useState<File | null>(null);
+  const [mainImagePreview, setMainImagePreview] = useState<string | null>(null);
+  const [additionalImages, setAdditionalImages] = useState<File[]>([]);
+  const [additionalPreviews, setAdditionalPreviews] = useState<string[]>([]);
+  
+  // Documents state
+  const [logbookFile, setLogbookFile] = useState<File | null>(null);
+  const [logbookPreview, setLogbookPreview] = useState<string | null>(null);
+  const [insuranceDoc, setInsuranceDoc] = useState<File | null>(null);
+  const [insurancePreview, setInsurancePreview] = useState<string | null>(null);
+  const [licenseDoc, setLicenseDoc] = useState<File | null>(null);
+  const [licensePreview, setLicensePreview] = useState<string | null>(null);
+  
+  const [formData, setFormData] = useState<FormData>({
+    regNumber: '',
+    make: '',
+    model: '',
+    year: new Date().getFullYear(),
+    color: '',
+    chassisNumber: '',
+    engineNumber: '',
+    
+    insuranceProvider: '',
+    insurancePolicyNo: '',
+    insuranceExpiry: '',
+    insuranceCoverType: 'Comprehensive',
+    insurancePremium: 0,
+    
+    licenseNumber: '',
+    licenseExpiry: '',
+    registrationDate: '',
+    
+    lastServiceDate: '',
+    lastServiceOdometer: 0,
+    nextServiceDate: '',
+    nextServiceOdometer: 0,
+    serviceIntervalKm: 5000,
+    serviceIntervalMonths: 6,
+    
+    currentOdometer: 0,
+    fuelType: 'Diesel',
+    fuelTankCapacity: 0,
+    avgFuelConsumption: 0,
+    
+    purchaseDate: '',
+    purchasePrice: 0,
+    dailyTarget: 5000,
+    monthlyTarget: 150000,
+    
+    transmission: 'Manual',
+    engineCapacity: '',
+    seatingCapacity: 14,
+    
+    notes: ''
+  });
+
+  // Calculate next service dates based on last service
+  useEffect(() => {
+    if (formData.lastServiceDate && formData.serviceIntervalMonths) {
+      const lastDate = new Date(formData.lastServiceDate);
+      const nextDate = new Date(lastDate);
+      nextDate.setMonth(nextDate.getMonth() + formData.serviceIntervalMonths);
+      setFormData(prev => ({
+        ...prev,
+        nextServiceDate: nextDate.toISOString().split('T')[0]
+      }));
+    }
+
+    if (formData.lastServiceOdometer && formData.serviceIntervalKm) {
+      setFormData(prev => ({
+        ...prev,
+        nextServiceOdometer: (prev.lastServiceOdometer || 0) + (prev.serviceIntervalKm || 0)
+      }));
+    }
+  }, [formData.lastServiceDate, formData.lastServiceOdometer, formData.serviceIntervalKm, formData.serviceIntervalMonths]);
+
+  // Mark section as completed when fields are filled
+  useEffect(() => {
+    const newCompleted = new Set(completedSections);
+    
+    // Basic Info
+    if (formData.regNumber && formData.make && formData.model && formData.year) {
+      newCompleted.add('basic');
+    }
+    
+    // Insurance
+    if (formData.insuranceExpiry) {
+      newCompleted.add('insurance');
+    }
+    
+    // Images
+    if (mainImage) {
+      newCompleted.add('images');
+    }
+    
+    setCompletedSections(newCompleted);
+  }, [formData, mainImage]);
+
+  // Handle image upload
+  const handleMainImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Validate file size (5MB max)
+      if (file.size > 5 * 1024 * 1024) {
+        setError('Image size should be less than 5MB');
+        return;
+      }
+      
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        setError('Please upload an image file');
+        return;
+      }
+      
+      setMainImage(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setMainImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleAdditionalImagesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    
+    // Validate total files count
+    if (additionalImages.length + files.length > 10) {
+      setError('Maximum 10 additional images allowed');
+      return;
+    }
+    
+    // Validate each file
+    const validFiles = files.filter(file => {
+      if (file.size > 5 * 1024 * 1024) {
+        setError('Each image should be less than 5MB');
+        return false;
+      }
+      if (!file.type.startsWith('image/')) {
+        setError('Please upload only image files');
+        return false;
+      }
+      return true;
+    });
+    
+    setAdditionalImages(prev => [...prev, ...validFiles]);
+    
+    // Create previews
+    validFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAdditionalPreviews(prev => [...prev, reader.result as string]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeAdditionalImage = (index: number) => {
+    setAdditionalImages(prev => prev.filter((_, i) => i !== index));
+    setAdditionalPreviews(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDocumentUpload = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    setter: React.Dispatch<React.SetStateAction<File | null>>,
+    setPreview: React.Dispatch<React.SetStateAction<string | null>>
+  ) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Validate file size (10MB max for documents)
+      if (file.size > 10 * 1024 * 1024) {
+        setError('Document size should be less than 10MB');
+        return;
+      }
+      
+      setter(file);
+      
+      // Create preview for images
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setPreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        // For PDFs, just show the filename
+        setPreview(file.name);
+      }
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value, type } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'number' ? parseFloat(value) || 0 : value,
+    }));
+    
+    // Clear error when user starts typing
+    if (error) setError(null);
+  };
+
+  const validateForm = (): boolean => {
+    if (!formData.regNumber.trim()) {
+      setError('Registration number is required');
+      setActiveSection('basic');
+      return false;
+    }
+    if (!formData.make.trim()) {
+      setError('Make is required');
+      setActiveSection('basic');
+      return false;
+    }
+    if (!formData.model.trim()) {
+      setError('Model is required');
+      setActiveSection('basic');
+      return false;
+    }
+    if (!formData.insuranceExpiry) {
+      setError('Insurance expiry date is required');
+      setActiveSection('insurance');
+      return false;
+    }
+    return true;
+  };
+
+  const uploadFileToDatabase = async (file: File, type: string): Promise<string> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('type', type);
+
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to upload file');
+    }
+
+    const data = await response.json();
+    return data.dataUrl; // Returns Base64 string
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    
+    if (!validateForm()) return;
+
+    setLoading(true);
+    setUploading(true);
+
+    try {
+      // Upload main image to get Base64
+      let mainImageDataUrl = null;
+      if (mainImage) {
+        mainImageDataUrl = await uploadFileToDatabase(mainImage, 'main');
+      }
+
+      // Upload additional images
+      const additionalImageDataUrls = [];
+      for (const image of additionalImages) {
+        const dataUrl = await uploadFileToDatabase(image, 'gallery');
+        additionalImageDataUrls.push(dataUrl);
+      }
+
+      // Upload documents
+      let logbookDataUrl = null;
+      if (logbookFile) {
+        logbookDataUrl = await uploadFileToDatabase(logbookFile, 'document');
+      }
+
+      let insuranceDataUrl = null;
+      if (insuranceDoc) {
+        insuranceDataUrl = await uploadFileToDatabase(insuranceDoc, 'document');
+      }
+
+      let licenseDataUrl = null;
+      if (licenseDoc) {
+        licenseDataUrl = await uploadFileToDatabase(licenseDoc, 'document');
+      }
+
+      // Prepare vehicle data with Base64 images
+      const vehicleData = {
+        ...formData,
+        regNumber: formData.regNumber.toUpperCase(),
+        mainImage: mainImageDataUrl,
+        images: additionalImageDataUrls,
+        logbookUrl: logbookDataUrl,
+        insuranceDocUrl: insuranceDataUrl,
+        licenseDocUrl: licenseDataUrl,
+        status: 'ACTIVE',
+        insuranceExpiry: new Date(formData.insuranceExpiry).toISOString(),
+        licenseExpiry: formData.licenseExpiry ? new Date(formData.licenseExpiry).toISOString() : null,
+        registrationDate: formData.registrationDate ? new Date(formData.registrationDate).toISOString() : null,
+        lastServiceDate: formData.lastServiceDate ? new Date(formData.lastServiceDate).toISOString() : null,
+        nextServiceDate: formData.nextServiceDate ? new Date(formData.nextServiceDate).toISOString() : null,
+        purchaseDate: formData.purchaseDate ? new Date(formData.purchaseDate).toISOString() : null,
+      };
+
+      // Submit vehicle data
+      const response = await fetch('/api/admin/vehicles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(vehicleData),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create vehicle');
+      }
+
+      setSuccess(true);
+      
+      // Redirect after 2 seconds
+      setTimeout(() => {
+        router.push('/dashboards/admin/vehicles');
+      }, 2000);
+
+    } catch (err: any) {
+      console.error('Error creating vehicle:', err);
+      setError(err.message || 'Failed to create vehicle');
+    } finally {
+      setLoading(false);
+      setUploading(false);
+    }
+  };
+
+  const scrollToSection = (sectionId: string) => {
+    setActiveSection(sectionId);
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const getSectionStatus = (sectionId: string) => {
+    if (completedSections.has(sectionId)) {
+      return <Check className="w-4 h-4 text-green-400" />;
+    }
+    if (activeSection === sectionId) {
+      return <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />;
+    }
+    return null;
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-gray-100">
+      {/* Animated Background */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 left-10 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute bottom-20 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000"></div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-gradient-to-r from-yellow-500/3 to-amber-500/3 rounded-full blur-3xl"></div>
+      </div>
+
+      {/* Header */}
+      <div className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-xl border-b border-yellow-500/20">
+        <div className="max-w-7xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link
+                href="/dashboards/admin/vehicles"
+                className="p-2 hover:bg-slate-800 rounded-xl transition border border-yellow-500/20 group"
+              >
+                <ArrowLeft className="w-5 h-5 text-gray-400 group-hover:text-yellow-400 transition" />
+              </Link>
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="w-10 h-10 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-xl flex items-center justify-center shadow-lg shadow-yellow-500/20">
+                    <Truck className="w-5 h-5 text-black" />
+                  </div>
+                  <div>
+                    <h1 className="text-2xl font-bold text-white">Add New Vehicle</h1>
+                    <p className="text-sm text-gray-500 flex items-center gap-2">
+                      <Radio className="w-3 h-3 text-yellow-400" />
+                      Register a new vehicle to your fleet
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Progress Indicator */}
+            <div className="hidden lg:flex items-center gap-6">
+              {sections.map((section) => (
+                <button
+                  key={section.id}
+                  onClick={() => scrollToSection(section.id)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${
+                    activeSection === section.id
+                      ? 'bg-yellow-500/10 text-yellow-400'
+                      : 'text-gray-500 hover:text-gray-300 hover:bg-slate-800/50'
+                  }`}
+                >
+                  <section.icon className="w-4 h-4" />
+                  <span className="text-xs font-medium">{section.name}</span>
+                  {getSectionStatus(section.id)}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="max-w-5xl mx-auto px-6 py-8">
+        {/* Success Message */}
+        {success && (
+          <div className="mb-6 p-4 bg-green-500/20 border border-green-500/30 rounded-xl flex items-center gap-3 animate-slideDown">
+            <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
+              <CheckCircle className="w-5 h-5 text-green-400" />
+            </div>
+            <div className="flex-1">
+              <p className="text-green-400 font-medium">Vehicle created successfully!</p>
+              <p className="text-sm text-green-500/70">Redirecting to vehicles list...</p>
+            </div>
+            <div className="w-16 h-1 bg-green-500/30 rounded-full overflow-hidden">
+              <div className="h-full bg-green-400 rounded-full animate-progress"></div>
+            </div>
+          </div>
+        )}
+
+        {/* Error Message */}
+        {error && (
+          <div className="mb-6 p-4 bg-rose-500/20 border border-rose-500/30 rounded-xl flex items-start gap-3 animate-shake">
+            <div className="w-8 h-8 bg-rose-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="w-5 h-5 text-rose-400" />
+            </div>
+            <div className="flex-1">
+              <p className="text-rose-400 font-medium">Error</p>
+              <p className="text-sm text-rose-400/70">{error}</p>
+            </div>
+            <button
+              onClick={() => setError(null)}
+              className="p-1 hover:bg-rose-500/20 rounded-lg transition"
+            >
+              <X className="w-4 h-4 text-rose-400" />
+            </button>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Basic Information */}
+          <section id="basic" className="scroll-mt-24">
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition group">
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                    <Car className="w-4 h-4 text-yellow-400" />
+                  </div>
+                  Basic Information
+                </h2>
+                {completedSections.has('basic') && (
+                  <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded-lg text-xs font-medium flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Completed
+                  </span>
+                )}
+              </div>
+              
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Registration Number */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Registration Number <span className="text-rose-400">*</span>
+                  </label>
+                  <div className="relative group">
+                    <Hash className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500 group-focus-within:text-yellow-400 transition" />
+                    <input
+                      type="text"
+                      name="regNumber"
+                      value={formData.regNumber}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      placeholder="KCD 123A"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Make */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Make <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="make"
+                    value={formData.make}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="Toyota"
+                    required
+                  />
+                </div>
+
+                {/* Model */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Model <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="model"
+                    value={formData.model}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="Hilux"
+                    required
+                  />
+                </div>
+
+                {/* Year */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Year <span className="text-rose-400">*</span>
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="number"
+                      name="year"
+                      value={formData.year}
+                      onChange={handleChange}
+                      min="1900"
+                      max={new Date().getFullYear() + 1}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Color */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Color
+                  </label>
+                  <div className="relative">
+                    <Palette className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="text"
+                      name="color"
+                      value={formData.color}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      placeholder="White"
+                    />
+                  </div>
+                </div>
+
+                {/* Chassis Number */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Chassis Number
+                  </label>
+                  <input
+                    type="text"
+                    name="chassisNumber"
+                    value={formData.chassisNumber}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="VIN123456789"
+                  />
+                </div>
+
+                {/* Engine Number */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Engine Number
+                  </label>
+                  <input
+                    type="text"
+                    name="engineNumber"
+                    value={formData.engineNumber}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="ENG123456"
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Insurance Details */}
+          <section id="insurance" className="scroll-mt-24">
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                    <Shield className="w-4 h-4 text-yellow-400" />
+                  </div>
+                  Insurance Details
+                </h2>
+                {completedSections.has('insurance') && (
+                  <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded-lg text-xs font-medium flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Completed
+                  </span>
+                )}
+              </div>
+              
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Insurance Provider */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Insurance Provider
+                  </label>
+                  <input
+                    type="text"
+                    name="insuranceProvider"
+                    value={formData.insuranceProvider}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="Jubilee Insurance"
+                  />
+                </div>
+
+                {/* Policy Number */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Policy Number
+                  </label>
+                  <input
+                    type="text"
+                    name="insurancePolicyNo"
+                    value={formData.insurancePolicyNo}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="POL-2024-123456"
+                  />
+                </div>
+
+                {/* Insurance Expiry */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Insurance Expiry <span className="text-rose-400">*</span>
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="date"
+                      name="insuranceExpiry"
+                      value={formData.insuranceExpiry}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Cover Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Cover Type
+                  </label>
+                  <select
+                    name="insuranceCoverType"
+                    value={formData.insuranceCoverType}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                  >
+                    <option value="Comprehensive">Comprehensive</option>
+                    <option value="Third Party">Third Party</option>
+                    <option value="Third Party Fire & Theft">Third Party Fire & Theft</option>
+                  </select>
+                </div>
+
+                {/* Premium */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Annual Premium (KES)
+                  </label>
+                  <div className="relative">
+                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="number"
+                      name="insurancePremium"
+                      value={formData.insurancePremium}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      placeholder="50000"
+                    />
+                  </div>
+                </div>
+
+                {/* Insurance Document Upload */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Insurance Certificate
+                  </label>
+                  <div className="border-2 border-dashed border-yellow-500/20 rounded-xl p-6 hover:border-yellow-400/50 transition cursor-pointer group">
+                    <input
+                      type="file"
+                      onChange={(e) => handleDocumentUpload(e, setInsuranceDoc, setInsurancePreview)}
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      id="insurance-doc"
+                    />
+                    <label htmlFor="insurance-doc" className="cursor-pointer block text-center">
+                      {insurancePreview ? (
+                        insuranceDoc?.type.startsWith('image/') ? (
+                          <div className="relative w-full h-32">
+                            <Image
+                              src={insurancePreview}
+                              alt="Insurance document"
+                              fill
+                              className="object-contain rounded-lg"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-2 p-4 bg-slate-800/50 rounded-lg">
+                            <File className="w-8 h-8 text-yellow-400" />
+                            <span className="text-sm text-gray-400">{insurancePreview}</span>
+                          </div>
+                        )
+                      ) : (
+                        <>
+                          <Upload className="w-10 h-10 text-gray-500 mx-auto mb-3 group-hover:text-yellow-400 transition" />
+                          <p className="text-gray-400 group-hover:text-yellow-400 transition">
+                            Click to upload insurance certificate
+                          </p>
+                          <p className="text-xs text-gray-600 mt-2">PDF or Image (max 10MB)</p>
+                        </>
+                      )}
+                    </label>
+                    {insurancePreview && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInsuranceDoc(null);
+                          setInsurancePreview(null);
+                        }}
+                        className="mt-2 text-xs text-rose-400 hover:text-rose-300 transition flex items-center gap-1 mx-auto"
+                      >
+                        <Trash2 className="w-3 h-3" /> Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* License & Registration */}
+          <section id="license" className="scroll-mt-24">
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                    <IdCard className="w-4 h-4 text-yellow-400" />
+                  </div>
+                  License & Registration
+                </h2>
+              </div>
+              
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* License Number */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Road License Number
+                  </label>
+                  <input
+                    type="text"
+                    name="licenseNumber"
+                    value={formData.licenseNumber}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="LIC-2024-123456"
+                  />
+                </div>
+
+                {/* License Expiry */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    License Expiry
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="date"
+                      name="licenseExpiry"
+                      value={formData.licenseExpiry}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    />
+                  </div>
+                </div>
+
+                {/* Registration Date */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    First Registration Date
+                  </label>
+                  <div className="relative">
+                    <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="date"
+                      name="registrationDate"
+                      value={formData.registrationDate}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    />
+                  </div>
+                </div>
+
+                {/* License Document Upload */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    License Document
+                  </label>
+                  <div className="border-2 border-dashed border-yellow-500/20 rounded-xl p-6 hover:border-yellow-400/50 transition cursor-pointer group">
+                    <input
+                      type="file"
+                      onChange={(e) => handleDocumentUpload(e, setLicenseDoc, setLicensePreview)}
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      id="license-doc"
+                    />
+                    <label htmlFor="license-doc" className="cursor-pointer block text-center">
+                      {licensePreview ? (
+                        licenseDoc?.type.startsWith('image/') ? (
+                          <div className="relative w-full h-32">
+                            <Image
+                              src={licensePreview}
+                              alt="License document"
+                              fill
+                              className="object-contain rounded-lg"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-2 p-4 bg-slate-800/50 rounded-lg">
+                            <File className="w-8 h-8 text-yellow-400" />
+                            <span className="text-sm text-gray-400">{licensePreview}</span>
+                          </div>
+                        )
+                      ) : (
+                        <>
+                          <Upload className="w-10 h-10 text-gray-500 mx-auto mb-3 group-hover:text-yellow-400 transition" />
+                          <p className="text-gray-400 group-hover:text-yellow-400 transition">
+                            Click to upload license document
+                          </p>
+                          <p className="text-xs text-gray-600 mt-2">PDF or Image (max 10MB)</p>
+                        </>
+                      )}
+                    </label>
+                    {licensePreview && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLicenseDoc(null);
+                          setLicensePreview(null);
+                        }}
+                        className="mt-2 text-xs text-rose-400 hover:text-rose-300 transition flex items-center gap-1 mx-auto"
+                      >
+                        <Trash2 className="w-3 h-3" /> Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Service & Maintenance */}
+          <section id="service" className="scroll-mt-24">
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                    <Wrench className="w-4 h-4 text-yellow-400" />
+                  </div>
+                  Service & Maintenance
+                </h2>
+              </div>
+              
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Current Odometer */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Current Odometer (km)
+                  </label>
+                  <div className="relative">
+                    <Gauge className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="number"
+                      name="currentOdometer"
+                      value={formData.currentOdometer}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+
+                {/* Last Service Date */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Last Service Date
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="date"
+                      name="lastServiceDate"
+                      value={formData.lastServiceDate}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    />
+                  </div>
+                </div>
+
+                {/* Last Service Odometer */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Last Service Odometer (km)
+                  </label>
+                  <input
+                    type="number"
+                    name="lastServiceOdometer"
+                    value={formData.lastServiceOdometer}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="0"
+                  />
+                </div>
+
+                {/* Service Interval (km) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Service Interval (km)
+                  </label>
+                  <input
+                    type="number"
+                    name="serviceIntervalKm"
+                    value={formData.serviceIntervalKm}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="5000"
+                  />
+                </div>
+
+                {/* Service Interval (months) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Service Interval (months)
+                  </label>
+                  <input
+                    type="number"
+                    name="serviceIntervalMonths"
+                    value={formData.serviceIntervalMonths}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="6"
+                  />
+                </div>
+
+                {/* Next Service Date (auto-calculated) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Next Service Date
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="date"
+                      name="nextServiceDate"
+                      value={formData.nextServiceDate}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    />
+                  </div>
+                </div>
+
+                {/* Next Service Odometer (auto-calculated) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Next Service Odometer (km)
+                  </label>
+                  <input
+                    type="number"
+                    name="nextServiceOdometer"
+                    value={formData.nextServiceOdometer}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="5000"
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Fuel & Technical Specs */}
+          <section id="fuel" className="scroll-mt-24">
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                    <Fuel className="w-4 h-4 text-yellow-400" />
+                  </div>
+                  Fuel & Technical Specifications
+                </h2>
+              </div>
+              
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Fuel Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Fuel Type
+                  </label>
+                  <select
+                    name="fuelType"
+                    value={formData.fuelType}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                  >
+                    <option value="Diesel">Diesel</option>
+                    <option value="Petrol">Petrol</option>
+                    <option value="Electric">Electric</option>
+                    <option value="Hybrid">Hybrid</option>
+                  </select>
+                </div>
+
+                {/* Fuel Tank Capacity */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Fuel Tank Capacity (L)
+                  </label>
+                  <input
+                    type="number"
+                    name="fuelTankCapacity"
+                    value={formData.fuelTankCapacity}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="80"
+                  />
+                </div>
+
+                {/* Average Fuel Consumption */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Avg Fuel Consumption (km/L)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    name="avgFuelConsumption"
+                    value={formData.avgFuelConsumption}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="8.5"
+                  />
+                </div>
+
+                {/* Transmission */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Transmission
+                  </label>
+                  <select
+                    name="transmission"
+                    value={formData.transmission}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                  >
+                    <option value="Manual">Manual</option>
+                    <option value="Automatic">Automatic</option>
+                  </select>
+                </div>
+
+                {/* Engine Capacity */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Engine Capacity
+                  </label>
+                  <input
+                    type="text"
+                    name="engineCapacity"
+                    value={formData.engineCapacity}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="2000cc"
+                  />
+                </div>
+
+                {/* Seating Capacity */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Seating Capacity
+                  </label>
+                  <input
+                    type="number"
+                    name="seatingCapacity"
+                    value={formData.seatingCapacity}
+                    onChange={handleChange}
+                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    placeholder="14"
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Financial Information */}
+          <section id="financial" className="scroll-mt-24">
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                    <CreditCard className="w-4 h-4 text-yellow-400" />
+                  </div>
+                  Financial Information
+                </h2>
+              </div>
+              
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Purchase Date */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Purchase Date
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="date"
+                      name="purchaseDate"
+                      value={formData.purchaseDate}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                    />
+                  </div>
+                </div>
+
+                {/* Purchase Price */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Purchase Price (KES)
+                  </label>
+                  <div className="relative">
+                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="number"
+                      name="purchasePrice"
+                      value={formData.purchasePrice}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      placeholder="2000000"
+                    />
+                  </div>
+                </div>
+
+                {/* Daily Target */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Daily Target (KES)
+                  </label>
+                  <div className="relative">
+                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="number"
+                      name="dailyTarget"
+                      value={formData.dailyTarget}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      placeholder="5000"
+                    />
+                  </div>
+                </div>
+
+                {/* Monthly Target */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Monthly Target (KES)
+                  </label>
+                  <div className="relative">
+                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="number"
+                      name="monthlyTarget"
+                      value={formData.monthlyTarget}
+                      onChange={handleChange}
+                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      placeholder="150000"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Images Upload */}
+          <section id="images" className="scroll-mt-24">
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                    <Camera className="w-4 h-4 text-yellow-400" />
+                  </div>
+                  Vehicle Images
+                </h2>
+                {completedSections.has('images') && (
+                  <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded-lg text-xs font-medium flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Completed
+                  </span>
+                )}
+              </div>
+              
+              <div className="p-6 space-y-8">
+                {/* Main Image */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-3">
+                    Main Vehicle Image <span className="text-rose-400">*</span>
+                  </label>
+                  <div className="border-2 border-dashed border-yellow-500/20 rounded-xl p-8 hover:border-yellow-400/50 transition cursor-pointer group">
+                    <input
+                      type="file"
+                      onChange={handleMainImageChange}
+                      accept="image/*"
+                      className="hidden"
+                      id="main-image"
+                    />
+                    <label htmlFor="main-image" className="cursor-pointer block text-center">
+                      {mainImagePreview ? (
+                        <div className="relative">
+                          <div className="relative w-full h-64">
+                            <Image
+                              src={mainImagePreview}
+                              alt="Main vehicle"
+                              fill
+                              className="object-contain rounded-lg"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setMainImage(null);
+                              setMainImagePreview(null);
+                            }}
+                            className="absolute top-2 right-2 p-2 bg-rose-500/20 rounded-lg hover:bg-rose-500/30 transition"
+                          >
+                            <Trash2 className="w-4 h-4 text-rose-400" />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="w-20 h-20 bg-yellow-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition">
+                            <ImageIcon className="w-10 h-10 text-yellow-400" />
+                          </div>
+                          <p className="text-gray-400 group-hover:text-yellow-400 transition font-medium">
+                            Click to upload main vehicle image
+                          </p>
+                          <p className="text-sm text-gray-600 mt-2">JPG, PNG up to 5MB</p>
+                        </>
+                      )}
+                    </label>
+                  </div>
+                </div>
+
+                {/* Additional Images */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-3">
+                    Additional Images
+                  </label>
+                  <div className="border-2 border-dashed border-yellow-500/20 rounded-xl p-8 hover:border-yellow-400/50 transition cursor-pointer group">
+                    <input
+                      type="file"
+                      onChange={handleAdditionalImagesChange}
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      id="additional-images"
+                    />
+                    <label htmlFor="additional-images" className="cursor-pointer block text-center">
+                      <div className="w-16 h-16 bg-yellow-500/10 rounded-xl flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition">
+                        <Plus className="w-8 h-8 text-yellow-400" />
+                      </div>
+                      <p className="text-gray-400 group-hover:text-yellow-400 transition">Add additional images</p>
+                      <p className="text-xs text-gray-600 mt-2">You can select multiple images (max 10)</p>
+                    </label>
+                  </div>
+
+                  {/* Image Previews */}
+                  {additionalPreviews.length > 0 && (
+                    <div className="mt-6">
+                      <p className="text-sm text-gray-400 mb-3">
+                        {additionalPreviews.length} image{additionalPreviews.length > 1 ? 's' : ''} selected
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                        {additionalPreviews.map((preview, index) => (
+                          <div key={index} className="relative group">
+                            <div className="relative w-full h-32 bg-slate-900/50 rounded-xl overflow-hidden border-2 border-yellow-500/20 group-hover:border-yellow-400/50 transition">
+                              <Image
+                                src={preview}
+                                alt={`Additional ${index + 1}`}
+                                fill
+                                className="object-cover"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeAdditionalImage(index)}
+                              className="absolute -top-2 -right-2 p-1.5 bg-rose-500/20 rounded-lg hover:bg-rose-500/30 transition opacity-0 group-hover:opacity-100"
+                            >
+                              <X className="w-3 h-3 text-rose-400" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Additional Notes */}
+          <section id="notes" className="scroll-mt-24">
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                    <FileText className="w-4 h-4 text-yellow-400" />
+                  </div>
+                  Additional Notes
+                </h2>
+              </div>
+              
+              <div className="p-6">
+                <textarea
+                  name="notes"
+                  value={formData.notes}
+                  onChange={handleChange}
+                  rows={4}
+                  className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition resize-none"
+                  placeholder="Any additional information about the vehicle..."
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* Form Actions */}
+          <div className="flex justify-end gap-3 pt-6 sticky bottom-6 z-30">
+            <Link
+              href="/dashboards/admin/vehicles"
+              className="px-6 py-3 border border-yellow-500/20 rounded-xl text-gray-300 font-medium hover:bg-slate-800 hover:border-yellow-400/30 transition flex items-center gap-2"
+            >
+              Cancel
+            </Link>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-8 py-3 bg-gradient-to-r from-yellow-400 to-amber-500 text-black font-medium rounded-xl shadow-lg shadow-yellow-500/30 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:from-yellow-300 hover:to-amber-400 transition group relative overflow-hidden"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>{uploading ? 'Uploading to Database...' : 'Creating Vehicle...'}</span>
+                </>
+              ) : (
+                <>
+                  <Truck className="w-5 h-5 group-hover:scale-110 transition" />
+                  Add Vehicle
+                </>
+              )}
+              
+              {/* Loading progress bar */}
+              {loading && (
+                <div className="absolute bottom-0 left-0 w-full h-1 bg-black/20">
+                  <div 
+                    className="h-full bg-white/50 animate-progress" 
+                    style={{ width: uploading ? '60%' : '80%' }}
+                  ></div>
+                </div>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <style jsx>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 0.5; }
+          50% { opacity: 1; }
+        }
+        @keyframes slideDown {
+          from {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          10%, 30%, 50%, 70%, 90% { transform: translateX(-2px); }
+          20%, 40%, 60%, 80% { transform: translateX(2px); }
+        }
+        @keyframes progress {
+          0% { width: 0%; }
+          100% { width: 100%; }
+        }
+        .animate-pulse {
+          animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        .animate-slideDown {
+          animation: slideDown 0.3s ease-out;
+        }
+        .animate-shake {
+          animation: shake 0.5s ease-in-out;
+        }
+        .animate-progress {
+          animation: progress 2s linear infinite;
+        }
+        .animation-delay-2000 {
+          animation-delay: 2s;
+        }
+      `}</style>
+    </div>
+  );
+}
