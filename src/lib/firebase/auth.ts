@@ -1,3 +1,4 @@
+// lib/firebase/auth.ts
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -98,7 +99,8 @@ export const signUp = async (
       phone,
       createdAt: new Date(),
       updatedAt: new Date(),
-      status: 'active' // Always active for now
+      status: 'active', // Always active for now
+      photoURL: userCredential.user.photoURL || ''
     };
 
     return userCredential;
@@ -112,6 +114,24 @@ export const signIn = async (email: string, password: string): Promise<UserCrede
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     console.log('Sign in successful for:', email);
+    
+    // Store user in memory after sign in
+    const user = userCredential.user;
+    const role = email === ADMIN_EMAIL ? 'admin' : 'driver';
+    
+    if (!userRoles[user.uid]) {
+      userRoles[user.uid] = {
+        uid: user.uid,
+        email: user.email || '',
+        displayName: user.displayName || user.email?.split('@')[0] || 'User',
+        role: role,
+        phone: user.phoneNumber || '',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        status: 'active',
+        photoURL: user.photoURL || ''
+      };
+    }
     
     return userCredential;
   } catch (error: any) {
@@ -135,6 +155,11 @@ export const signIn = async (email: string, password: string): Promise<UserCrede
 export const logOut = async (): Promise<void> => {
   try {
     await signOut(auth);
+    // Clear user roles for logged out user
+    const user = auth.currentUser;
+    if (user) {
+      delete userRoles[user.uid];
+    }
   } catch (error: any) {
     throw new Error(error.message);
   }
@@ -146,6 +171,41 @@ export const resetPassword = async (email: string): Promise<void> => {
     await sendPasswordResetEmail(auth, email);
   } catch (error: any) {
     throw new Error(error.message);
+  }
+};
+
+// Get current user data - NEW FUNCTION
+export const getCurrentUserData = async (): Promise<UserData | null> => {
+  try {
+    const user = auth.currentUser;
+    if (!user) return null;
+
+    // Check if user data exists in memory
+    let userData = userRoles[user.uid];
+    
+    if (!userData) {
+      // If not in memory, create basic user data
+      const role = user.email === ADMIN_EMAIL ? 'admin' : 'driver';
+      userData = {
+        uid: user.uid,
+        email: user.email || '',
+        displayName: user.displayName || user.email?.split('@')[0] || 'User',
+        role: role,
+        phone: user.phoneNumber || '',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        status: 'active',
+        photoURL: user.photoURL || ''
+      };
+      
+      // Store in memory
+      userRoles[user.uid] = userData;
+    }
+    
+    return userData;
+  } catch (error: any) {
+    console.error('Error getting current user data:', error);
+    return null;
   }
 };
 
@@ -175,4 +235,38 @@ export const getUserRole = async (uid: string): Promise<string | null> => {
 export const isAdmin = async (uid: string): Promise<boolean> => {
   const role = await getUserRole(uid);
   return role === 'admin';
+};
+
+// Get user data by UID
+export const getUserData = async (uid: string): Promise<UserData | null> => {
+  try {
+    // Check memory first
+    if (userRoles[uid]) {
+      return userRoles[uid];
+    }
+    
+    // If not in memory and it's the current user, create it
+    const currentUser = auth.currentUser;
+    if (currentUser && currentUser.uid === uid) {
+      const role = currentUser.email === ADMIN_EMAIL ? 'admin' : 'driver';
+      const userData: UserData = {
+        uid: currentUser.uid,
+        email: currentUser.email || '',
+        displayName: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+        role: role,
+        phone: currentUser.phoneNumber || '',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        status: 'active',
+        photoURL: currentUser.photoURL || ''
+      };
+      userRoles[uid] = userData;
+      return userData;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error getting user data:', error);
+    return null;
+  }
 };

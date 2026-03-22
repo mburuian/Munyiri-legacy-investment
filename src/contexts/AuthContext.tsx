@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { 
-  User,
+  User as FirebaseUser,
   onAuthStateChanged
 } from 'firebase/auth';
 import { auth } from '../lib/firebase/config';
@@ -10,7 +10,7 @@ import { getCurrentUserData, UserData, logOut } from '../lib/firebase/auth';
 import { useRouter } from 'next/navigation';
 
 interface AuthContextType {
-  user: User | null;
+  user: FirebaseUser | null;
   userData: UserData | null;
   loading: boolean;
   logout: () => Promise<void>;
@@ -28,23 +28,33 @@ export function useAuth() {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   const refreshUserData = async () => {
     if (user) {
-      const data = await getCurrentUserData(user);
-      setUserData(data);
+      try {
+        const data = await getCurrentUserData();
+        setUserData(data);
+      } catch (error) {
+        console.error('Error refreshing user data:', error);
+      }
     }
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      if (user) {
-        await refreshUserData();
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      if (firebaseUser) {
+        try {
+          const data = await getCurrentUserData();
+          setUserData(data);
+        } catch (error) {
+          console.error('Error fetching user data:', error);
+          setUserData(null);
+        }
       } else {
         setUserData(null);
       }
@@ -52,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, []); // Removed user from dependency array to avoid infinite loop
 
   const logout = async () => {
     try {
