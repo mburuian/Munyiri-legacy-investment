@@ -80,6 +80,7 @@ model Vehicle {
   incomeLogs    IncomeLog[]
   expenses      Expense[]
   alerts        Alert[]
+  images        VehicleImage[] // Add this line
 }
 
 model Trip {
@@ -177,6 +178,22 @@ model IncomeLog {
   @@index([driverId])
   @@index([date])
   @@map("income_logs")
+}
+model VehicleImage {
+  id         String   @id @default(cuid())
+  url        String
+  type       String   @default("image")
+  isPrimary  Boolean  @default(false)
+  fileName   String?
+  fileType   String?
+  vehicleId  String
+  createdAt  DateTime @default(now())
+  
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  
+  @@index([vehicleId])
+  @@index([isPrimary])
+  @@map("vehicle_images")
 }
 
 model Expense {

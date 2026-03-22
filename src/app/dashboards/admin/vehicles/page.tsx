@@ -63,22 +63,21 @@ import {
   BarChart3,
   ImageIcon,
   Upload,
-  GalleryHorizontalEnd
+  GalleryHorizontalEnd,
+  GripVertical,
+  Loader2,
+  RefreshCw,
+  Zap,
+  Users2
 } from "lucide-react";
+import { auth } from '../../../../lib/firebase/config';
 
-interface VehicleImage {
-  id: string;
-  url: string;
-  type: string;
-  isPrimary: boolean;
-  fileName?: string;
-  fileType?: string;
-}
-
+// Types based on API response
 interface Vehicle {
   id: string;
   plateNumber: string;
   model: string;
+  capacity: number;
   status: 'ACTIVE' | 'MAINTENANCE' | 'INACTIVE' | 'OUT_OF_SERVICE';
   driverId: string | null;
   driver?: {
@@ -88,126 +87,171 @@ interface Vehicle {
       phone: string;
     };
   } | null;
-  images?: VehicleImage[];
-  primaryImage?: string;
+  createdAt: string;
+  updatedAt: string;
   _count?: {
     incomeLogs: number;
     expenses: number;
     maintenance: number;
-    trips: number;
     alerts: number;
+    trips: number;
     documents: number;
   };
-  recentTrips?: any[];
-  recentMaintenance?: any[];
-  recentIncome?: any[];
-  recentExpenses?: any[];
-  activeAlerts?: any[];
-  recentDocuments?: any[];
-  summary?: {
-    totalTrips: number;
-    totalIncome: number;
-    totalExpenses: number;
-    maintenanceCost: number;
-    netProfit: number;
-    activeAlerts: number;
-    lastTrip?: any;
-    nextMaintenance?: any;
+  images?: { url: string; isPrimary: boolean }[]; // For future image support
+}
+
+interface ApiResponse {
+  vehicles: Vehicle[];
+  summary: {
+    total: number;
+    active: number;
+    maintenance: number;
+    inactive: number;
+    outOfService: number;
+    assigned: number;
+  };
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    pages: number;
   };
 }
 
-const getVehicleImageUrl = (vehicle: Vehicle): string | null => {
-  if (vehicle.images && vehicle.images.length > 0) {
-    const primaryImage = vehicle.images.find(img => img.isPrimary);
-    if (primaryImage && primaryImage.url) {
-      return primaryImage.url;
-    }
-    if (vehicle.images[0].url) {
-      return vehicle.images[0].url;
-    }
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'ACTIVE':
+      return 'bg-green-500/20 text-green-400 border border-green-500/30';
+    case 'MAINTENANCE':
+      return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
+    case 'INACTIVE':
+      return 'bg-rose-500/20 text-rose-400 border border-rose-500/30';
+    case 'OUT_OF_SERVICE':
+      return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
+    default:
+      return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
   }
-  if (vehicle.primaryImage) {
-    return vehicle.primaryImage;
-  }
-  return null;
 };
 
-const isValidImageUrl = (url: string | null): boolean => {
-  if (!url) return false;
-  return url.startsWith('data:image/') || url.startsWith('/uploads/');
+const getStatusIcon = (status: string) => {
+  switch (status) {
+    case 'ACTIVE':
+      return <CheckCircle className="w-3 h-3" />;
+    case 'MAINTENANCE':
+      return <Wrench className="w-3 h-3" />;
+    case 'INACTIVE':
+      return <XCircle className="w-3 h-3" />;
+    default:
+      return <AlertCircle className="w-3 h-3" />;
+  }
+};
+
+const formatCurrency = (amount: number) => {
+  return `KES ${amount.toLocaleString()}`;
 };
 
 export default function VehiclesPage() {
   const router = useRouter();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [filteredVehicles, setFilteredVehicles] = useState<Vehicle[]>([]);
+  const [summary, setSummary] = useState<ApiResponse['summary'] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'recent' | 'name' | 'status'>('recent');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const itemsPerPage = 12;
 
   useEffect(() => {
     loadVehicles();
-  }, []);
+  }, [currentPage, statusFilter, searchQuery]);
 
   useEffect(() => {
-    let filtered = vehicles.filter(vehicle => {
-      const matchesSearch = 
+    let filtered = [...vehicles];
+    
+    if (searchQuery) {
+      filtered = filtered.filter(vehicle => 
         vehicle.plateNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
         vehicle.model.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (vehicle.driver?.user?.name || '').toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesStatus = statusFilter === 'all' || vehicle.status === statusFilter;
-      return matchesSearch && matchesStatus;
-    });
-
-    if (sortBy === 'name') {
-      filtered = filtered.sort((a, b) => a.plateNumber.localeCompare(b.plateNumber));
-    } else if (sortBy === 'status') {
-      filtered = filtered.sort((a, b) => a.status.localeCompare(b.status));
+        (vehicle.driver?.user?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+      );
     }
-
+    
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(vehicle => vehicle.status === statusFilter);
+    }
+    
+    if (sortBy === 'name') {
+      filtered.sort((a, b) => a.plateNumber.localeCompare(b.plateNumber));
+    } else if (sortBy === 'status') {
+      filtered.sort((a, b) => a.status.localeCompare(b.status));
+    } else {
+      filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+    
     setFilteredVehicles(filtered);
-    setCurrentPage(1);
-  }, [searchQuery, statusFilter, sortBy, vehicles]);
+  }, [vehicles, searchQuery, statusFilter, sortBy]);
 
-  const loadVehicles = async () => {
-    setLoading(true);
+  const loadVehicles = async (showRefresh = false) => {
+    if (showRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
+    
     try {
-      const response = await fetch('/api/admin/vehicles');
+      const user = auth.currentUser;
+      if (!user) {
+        router.push('/auth/login');
+        return;
+      }
+      
+      const token = await user.getIdToken();
+      
+      // Build query params
+      const params = new URLSearchParams();
+      params.append('page', currentPage.toString());
+      params.append('limit', itemsPerPage.toString());
+      if (statusFilter !== 'all') params.append('status', statusFilter);
+      if (searchQuery) params.append('search', searchQuery);
+      
+      const response = await fetch(`/api/admin/vehicles?${params.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (response.status === 401) {
+        router.push('/auth/login');
+        return;
+      }
+      
       if (!response.ok) throw new Error('Failed to fetch vehicles');
-      const data = await response.json();
-      setVehicles(data.vehicles || []);
-      setFilteredVehicles(data.vehicles || []);
+      
+      const data: ApiResponse = await response.json();
+      setVehicles(data.vehicles);
+      setSummary(data.summary);
+      setTotalPages(data.pagination.pages);
     } catch (error) {
       console.error('Error loading vehicles:', error);
       setError('Failed to load vehicles. Please try again.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   const handleViewDetails = async (vehicle: Vehicle) => {
-    try {
-      const response = await fetch(`/api/admin/vehicles/${vehicle.id}`);
-      if (!response.ok) throw new Error('Failed to fetch vehicle details');
-      const detailedVehicle = await response.json();
-      setSelectedVehicle(detailedVehicle);
-      setShowDetailsModal(true);
-    } catch (error) {
-      console.error('Error loading vehicle details:', error);
-      setError('Failed to load vehicle details');
-    }
+    setSelectedVehicle(vehicle);
+    setShowDetailsModal(true);
   };
 
   const handleEdit = (vehicleId: string) => {
@@ -222,12 +266,27 @@ export default function VehiclesPage() {
   const handleDeleteConfirm = async () => {
     if (!vehicleToDelete) return;
     setDeleteLoading(true);
+    
     try {
+      const user = auth.currentUser;
+      if (!user) {
+        router.push('/auth/login');
+        return;
+      }
+      
+      const token = await user.getIdToken();
+      
       const response = await fetch(`/api/admin/vehicles/${vehicleToDelete.id}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       });
+      
       if (!response.ok) throw new Error('Failed to delete vehicle');
-      await loadVehicles();
+      
+      await loadVehicles(true);
       setShowDeleteModal(false);
       setVehicleToDelete(null);
     } catch (error) {
@@ -238,54 +297,17 @@ export default function VehiclesPage() {
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'ACTIVE':
-        return 'bg-green-500/20 text-green-400 border border-green-500/30';
-      case 'MAINTENANCE':
-        return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
-      case 'INACTIVE':
-        return 'bg-rose-500/20 text-rose-400 border border-rose-500/30';
-      case 'OUT_OF_SERVICE':
-        return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
-      default:
-        return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'ACTIVE':
-        return <CheckCircle className="w-3 h-3" />;
-      case 'MAINTENANCE':
-        return <Wrench className="w-3 h-3" />;
-      case 'INACTIVE':
-        return <XCircle className="w-3 h-3" />;
-      default:
-        return <AlertCircle className="w-3 h-3" />;
-    }
-  };
-
   const getPerformanceRating = (vehicle: Vehicle) => {
-    const profit = vehicle.summary?.netProfit || 0;
-    const trips = vehicle.summary?.totalTrips || 0;
-    if (profit > 50000 && trips > 50) return { rating: 'Excellent', color: 'text-green-400', icon: Star };
-    if (profit > 25000 && trips > 25) return { rating: 'Good', color: 'text-blue-400', icon: TrendingUp };
-    if (profit > 10000 && trips > 10) return { rating: 'Fair', color: 'text-yellow-400', icon: Activity };
-    return { rating: 'Needs Attention', color: 'text-rose-400', icon: AlertTriangle };
+    const trips = vehicle._count?.trips || 0;
+    const income = vehicle._count?.incomeLogs || 0;
+    
+    if (trips > 100 && income > 50) return { rating: 'Excellent', color: 'text-emerald-400', icon: Award };
+    if (trips > 50 && income > 25) return { rating: 'Great', color: 'text-green-400', icon: Star };
+    if (trips > 25 && income > 10) return { rating: 'Good', color: 'text-blue-400', icon: TrendingUp };
+    if (trips > 10 && income > 5) return { rating: 'Fair', color: 'text-yellow-400', icon: Activity };
+    return { rating: 'Low Activity', color: 'text-rose-400', icon: AlertTriangle };
   };
 
-  const handleImageError = (vehicleId: string) => {
-    setImageErrors(prev => ({ ...prev, [vehicleId]: true }));
-  };
-
-  const getImageCount = (vehicle: Vehicle): number => {
-    if (vehicle.images && vehicle.images.length > 0) return vehicle.images.length;
-    if (vehicle.primaryImage) return 1;
-    return 0;
-  };
-
-  const totalPages = Math.ceil(filteredVehicles.length / itemsPerPage);
   const paginatedVehicles = filteredVehicles.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
@@ -305,28 +327,8 @@ export default function VehiclesPage() {
     );
   }
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
-        <div className="text-center max-w-md">
-          <div className="w-20 h-20 bg-rose-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <AlertTriangle className="w-10 h-10 text-rose-400" />
-          </div>
-          <h2 className="text-2xl font-bold text-white mb-4">Error Loading Vehicles</h2>
-          <p className="text-gray-400 mb-6">{error}</p>
-          <button
-            onClick={loadVehicles}
-            className="px-6 py-3 bg-gradient-to-r from-yellow-400 to-amber-500 text-black rounded-xl font-semibold hover:from-yellow-300 hover:to-amber-400 transition shadow-lg shadow-yellow-500/30"
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-gray-100">
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
       {/* Animated Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-20 left-10 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse"></div>
@@ -344,15 +346,23 @@ export default function VehiclesPage() {
                   <Truck className="w-4 h-4 text-black" />
                 </div>
                 <h1 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">
-                  Fleet Vehicles
+                  Fleet Management
                 </h1>
               </div>
               <p className="text-xs sm:text-sm text-gray-500 flex items-center gap-2">
                 <Radio className="w-3 h-3 text-yellow-400" />
-                Managing {filteredVehicles.length} vehicles • {vehicles.filter(v => v.status === 'ACTIVE').length} active
+                Managing {summary?.total || 0} vehicles • {summary?.active || 0} active • {summary?.assigned || 0} assigned
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => loadVehicles(true)}
+                disabled={refreshing}
+                className="p-2 bg-slate-800/50 border border-yellow-500/20 rounded-xl hover:bg-slate-700 transition disabled:opacity-50"
+                title="Refresh"
+              >
+                <RefreshCw className={`w-4 h-4 text-gray-400 ${refreshing ? 'animate-spin' : ''}`} />
+              </button>
               <div className="flex items-center gap-1 p-1 bg-slate-800/50 border border-yellow-500/20 rounded-xl">
                 <button
                   onClick={() => setViewMode('grid')}
@@ -393,6 +403,19 @@ export default function VehiclesPage() {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        {/* Error Alert */}
+        {error && (
+          <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-rose-400" />
+              <span className="text-sm text-rose-300">{error}</span>
+            </div>
+            <button onClick={() => setError(null)} className="text-rose-400 hover:text-rose-300">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* Filters and Search */}
         <div className="flex flex-col md:flex-row gap-3 mb-6">
           <div className="flex-1 relative">
@@ -433,54 +456,50 @@ export default function VehiclesPage() {
         </div>
 
         {/* Stats Summary */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
-          <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm rounded-xl p-4 border border-yellow-500/20 hover:border-yellow-400/40 transition-all">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs sm:text-sm text-gray-500">Total Fleet</p>
-              <div className="w-8 h-8 bg-yellow-500/20 rounded-lg flex items-center justify-center">
-                <Truck className="w-4 h-4 text-yellow-400" />
+        {summary && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm rounded-xl p-4 border border-yellow-500/20 hover:border-yellow-400/40 transition-all group">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs sm:text-sm text-gray-500">Total Fleet</p>
+                <div className="w-8 h-8 bg-yellow-500/20 rounded-lg flex items-center justify-center group-hover:scale-110 transition">
+                  <Truck className="w-4 h-4 text-yellow-400" />
+                </div>
               </div>
+              <p className="text-2xl sm:text-3xl font-bold text-white">{summary.total}</p>
+              <p className="text-xs text-gray-500 mt-1">Vehicles in fleet</p>
             </div>
-            <p className="text-2xl sm:text-3xl font-bold text-white">{vehicles.length}</p>
-            <p className="text-xs text-gray-500 mt-1">Vehicles in fleet</p>
-          </div>
-          <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm rounded-xl p-4 border border-green-500/20 hover:border-green-400/40 transition-all">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs sm:text-sm text-gray-500">Active</p>
-              <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-                <CheckCircle className="w-4 h-4 text-green-400" />
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm rounded-xl p-4 border border-green-500/20 hover:border-green-400/40 transition-all group">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs sm:text-sm text-gray-500">Active</p>
+                <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center group-hover:scale-110 transition">
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                </div>
               </div>
+              <p className="text-2xl sm:text-3xl font-bold text-green-400">{summary.active}</p>
+              <p className="text-xs text-gray-500 mt-1">On the road</p>
             </div>
-            <p className="text-2xl sm:text-3xl font-bold text-green-400">
-              {vehicles.filter(v => v.status === 'ACTIVE').length}
-            </p>
-            <p className="text-xs text-gray-500 mt-1">On the road</p>
-          </div>
-          <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm rounded-xl p-4 border border-amber-500/20 hover:border-amber-400/40 transition-all">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs sm:text-sm text-gray-500">Maintenance</p>
-              <div className="w-8 h-8 bg-amber-500/20 rounded-lg flex items-center justify-center">
-                <Wrench className="w-4 h-4 text-amber-400" />
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm rounded-xl p-4 border border-amber-500/20 hover:border-amber-400/40 transition-all group">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs sm:text-sm text-gray-500">Maintenance</p>
+                <div className="w-8 h-8 bg-amber-500/20 rounded-lg flex items-center justify-center group-hover:scale-110 transition">
+                  <Wrench className="w-4 h-4 text-amber-400" />
+                </div>
               </div>
+              <p className="text-2xl sm:text-3xl font-bold text-amber-400">{summary.maintenance}</p>
+              <p className="text-xs text-gray-500 mt-1">In service bay</p>
             </div>
-            <p className="text-2xl sm:text-3xl font-bold text-amber-400">
-              {vehicles.filter(v => v.status === 'MAINTENANCE').length}
-            </p>
-            <p className="text-xs text-gray-500 mt-1">In service bay</p>
-          </div>
-          <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm rounded-xl p-4 border border-blue-500/20 hover:border-blue-400/40 transition-all">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs sm:text-sm text-gray-500">Assigned</p>
-              <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                <Users className="w-4 h-4 text-blue-400" />
+            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm rounded-xl p-4 border border-blue-500/20 hover:border-blue-400/40 transition-all group">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs sm:text-sm text-gray-500">Assigned</p>
+                <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center group-hover:scale-110 transition">
+                  <Users className="w-4 h-4 text-blue-400" />
+                </div>
               </div>
+              <p className="text-2xl sm:text-3xl font-bold text-blue-400">{summary.assigned}</p>
+              <p className="text-xs text-gray-500 mt-1">With drivers</p>
             </div>
-            <p className="text-2xl sm:text-3xl font-bold text-blue-400">
-              {vehicles.filter(v => v.driverId).length}
-            </p>
-            <p className="text-xs text-gray-500 mt-1">With drivers</p>
           </div>
-        </div>
+        )}
 
         {/* Vehicles Display */}
         {filteredVehicles.length === 0 ? (
@@ -507,48 +526,29 @@ export default function VehiclesPage() {
             {paginatedVehicles.map((vehicle) => {
               const performance = getPerformanceRating(vehicle);
               const PerformanceIcon = performance.icon;
-              const vehicleImageUrl = getVehicleImageUrl(vehicle);
-              const hasImage = vehicleImageUrl && isValidImageUrl(vehicleImageUrl) && !imageErrors[vehicle.id];
-              const imageCount = getImageCount(vehicle);
+              
               return (
                 <div
                   key={vehicle.id}
                   className="group relative bg-slate-800/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/50 hover:shadow-xl hover:shadow-yellow-500/10 transition-all duration-300 cursor-pointer"
                   onClick={() => handleViewDetails(vehicle)}
                 >
-                  <div className="relative h-44 bg-gradient-to-br from-slate-800 to-slate-900 flex items-center justify-center overflow-hidden">
+                  {/* Image Section */}
+                  <div className="relative h-48 bg-gradient-to-br from-slate-800 to-slate-900 flex items-center justify-center overflow-hidden">
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent opacity-60"></div>
-                    <div className="relative z-10 w-full h-full flex items-center justify-center">
-                      {hasImage ? (
-                        <div className="relative w-full h-full">
-                          <Image
-                            src={vehicleImageUrl}
-                            alt={vehicle.model}
-                            fill
-                            className="object-contain p-2 group-hover:scale-105 transition-transform duration-300"
-                            onError={() => handleImageError(vehicle.id)}
-                            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                          />
-                          {imageCount > 1 && (
-                            <div className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-sm rounded-full px-1.5 py-0.5 text-xs flex items-center gap-1">
-                              <GalleryHorizontalEnd className="w-3 h-3" />
-                              {imageCount}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center">
-                          <Camera className="w-12 h-12 text-yellow-400/30 mb-2" />
-                          <span className="text-xs text-gray-500">No image</span>
-                        </div>
-                      )}
+                    <div className="relative z-10">
+                      <Car className="w-20 h-20 text-yellow-400/30" />
                     </div>
+                    
+                    {/* Status Badge */}
                     <div className="absolute top-3 right-3 z-20">
                       <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(vehicle.status)} backdrop-blur-sm`}>
                         {getStatusIcon(vehicle.status)}
                         <span>{vehicle.status.replace('_', ' ')}</span>
                       </div>
                     </div>
+                    
+                    {/* Performance Badge */}
                     <div className="absolute bottom-3 left-3 z-20">
                       <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${performance.color} bg-black/50 backdrop-blur-sm`}>
                         <PerformanceIcon className="w-3 h-3" />
@@ -556,6 +556,8 @@ export default function VehiclesPage() {
                       </div>
                     </div>
                   </div>
+                  
+                  {/* Content Section */}
                   <div className="p-4">
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex-1">
@@ -563,24 +565,27 @@ export default function VehiclesPage() {
                           {vehicle.plateNumber}
                         </h3>
                         <p className="text-sm text-gray-400 mt-0.5">{vehicle.model}</p>
+                        <p className="text-xs text-gray-500">Capacity: {vehicle.capacity} seats</p>
                       </div>
                     </div>
+                    
+                    {/* Quick Stats */}
                     <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-yellow-500/10">
                       <div className="text-center">
-                        <p className="text-xs text-gray-500">Trips</p>
+                        <p className="text-[10px] text-gray-500">Trips</p>
                         <p className="text-sm font-semibold text-white">{vehicle._count?.trips || 0}</p>
                       </div>
                       <div className="text-center">
-                        <p className="text-xs text-gray-500">Income</p>
-                        <p className="text-sm font-semibold text-green-400">KES {(vehicle.summary?.totalIncome || 0).toLocaleString()}</p>
+                        <p className="text-[10px] text-gray-500">Income</p>
+                        <p className="text-sm font-semibold text-green-400">{vehicle._count?.incomeLogs || 0}</p>
                       </div>
                       <div className="text-center">
-                        <p className="text-xs text-gray-500">Profit</p>
-                        <p className={`text-sm font-semibold ${(vehicle.summary?.netProfit || 0) >= 0 ? 'text-green-400' : 'text-rose-400'}`}>
-                          KES {(vehicle.summary?.netProfit || 0).toLocaleString()}
-                        </p>
+                        <p className="text-[10px] text-gray-500">Alerts</p>
+                        <p className="text-sm font-semibold text-amber-400">{vehicle._count?.alerts || 0}</p>
                       </div>
                     </div>
+                    
+                    {/* Driver Info */}
                     <div className="mt-3 pt-3 border-t border-yellow-500/10">
                       {vehicle.driver ? (
                         <div className="flex items-center gap-2">
@@ -591,19 +596,36 @@ export default function VehiclesPage() {
                         </div>
                       ) : (
                         <div className="flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 text-gray-600" />
+                          <AlertCircle className="w-3 h-3 text-gray-600" />
                           <span className="text-xs text-gray-600">No driver assigned</span>
                         </div>
                       )}
                     </div>
                   </div>
+                  
+                  {/* Action Buttons */}
                   <div className="absolute top-3 left-3 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                     <div className="flex gap-1">
-                      <button onClick={(e) => { e.stopPropagation(); handleViewDetails(vehicle); }} className="p-1.5 bg-slate-800/90 rounded-lg hover:bg-yellow-500/20 transition" title="View Details">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleViewDetails(vehicle); }} 
+                        className="p-1.5 bg-slate-800/90 rounded-lg hover:bg-yellow-500/20 transition" 
+                        title="View Details"
+                      >
                         <Eye className="w-3.5 h-3.5 text-gray-300" />
                       </button>
-                      <button onClick={(e) => { e.stopPropagation(); handleEdit(vehicle.id); }} className="p-1.5 bg-slate-800/90 rounded-lg hover:bg-yellow-500/20 transition" title="Edit Vehicle">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleEdit(vehicle.id); }} 
+                        className="p-1.5 bg-slate-800/90 rounded-lg hover:bg-yellow-500/20 transition" 
+                        title="Edit Vehicle"
+                      >
                         <Edit className="w-3.5 h-3.5 text-gray-300" />
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleDeleteClick(vehicle); }} 
+                        className="p-1.5 bg-slate-800/90 rounded-lg hover:bg-rose-500/20 transition" 
+                        title="Delete Vehicle"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-gray-300" />
                       </button>
                     </div>
                   </div>
@@ -620,9 +642,8 @@ export default function VehiclesPage() {
                     <th className="text-left py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Vehicle</th>
                     <th className="text-left py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Driver</th>
                     <th className="text-left py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                    <th className="text-left py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Capacity</th>
                     <th className="text-left py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Performance</th>
-                    <th className="text-left py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Trips</th>
-                    <th className="text-right py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Net Profit</th>
                     <th className="text-center py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -630,23 +651,12 @@ export default function VehiclesPage() {
                   {paginatedVehicles.map((vehicle) => {
                     const performance = getPerformanceRating(vehicle);
                     const PerformanceIcon = performance.icon;
-                    const vehicleImageUrl = getVehicleImageUrl(vehicle);
-                    const hasImage = vehicleImageUrl && isValidImageUrl(vehicleImageUrl) && !imageErrors[vehicle.id];
                     return (
                       <tr key={vehicle.id} onClick={() => handleViewDetails(vehicle)} className="hover:bg-yellow-500/5 transition-colors cursor-pointer">
                         <td className="py-4 px-4 sm:px-6">
-                          <div className="flex items-center gap-3">
-                            <div className="relative w-12 h-12 bg-slate-700 rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center">
-                              {hasImage ? (
-                                <Image src={vehicleImageUrl} alt={vehicle.model} fill className="object-contain p-1" onError={() => handleImageError(vehicle.id)} sizes="48px" />
-                              ) : (
-                                <Camera className="w-6 h-6 text-gray-500" />
-                              )}
-                            </div>
-                            <div>
-                              <p className="font-medium text-white">{vehicle.plateNumber}</p>
-                              <p className="text-xs text-gray-500">{vehicle.model}</p>
-                            </div>
+                          <div>
+                            <p className="font-medium text-white">{vehicle.plateNumber}</p>
+                            <p className="text-xs text-gray-500">{vehicle.model}</p>
                           </div>
                         </td>
                         <td className="py-4 px-4 sm:px-6">
@@ -666,18 +676,13 @@ export default function VehiclesPage() {
                           </span>
                         </td>
                         <td className="py-4 px-4 sm:px-6">
+                          <span className="text-sm text-gray-300">{vehicle.capacity} seats</span>
+                        </td>
+                        <td className="py-4 px-4 sm:px-6">
                           <div className={`flex items-center gap-1 ${performance.color}`}>
                             <PerformanceIcon className="w-4 h-4" />
                             <span className="text-sm">{performance.rating}</span>
                           </div>
-                        </td>
-                        <td className="py-4 px-4 sm:px-6">
-                          <span className="text-sm text-gray-300">{vehicle._count?.trips || 0}</span>
-                        </td>
-                        <td className="py-4 px-4 sm:px-6 text-right">
-                          <span className={`text-sm font-medium ${(vehicle.summary?.netProfit || 0) >= 0 ? 'text-green-400' : 'text-rose-400'}`}>
-                            KES {(vehicle.summary?.netProfit || 0).toLocaleString()}
-                          </span>
                         </td>
                         <td className="py-4 px-4 sm:px-6">
                           <div className="flex items-center justify-center gap-1 sm:gap-2" onClick={(e) => e.stopPropagation()}>
@@ -687,7 +692,7 @@ export default function VehiclesPage() {
                             <button onClick={() => handleEdit(vehicle.id)} className="p-1.5 hover:bg-slate-700 rounded-lg transition" title="Edit">
                               <Edit className="w-4 h-4 text-gray-400" />
                             </button>
-                            <button onClick={() => handleDeleteClick(vehicle)} className="p-1.5 hover:bg-slate-700 rounded-lg transition" title="Delete">
+                            <button onClick={() => handleDeleteClick(vehicle)} className="p-1.5 hover:bg-rose-500/20 rounded-lg transition" title="Delete">
                               <Trash2 className="w-4 h-4 text-gray-400" />
                             </button>
                           </div>
@@ -708,7 +713,11 @@ export default function VehiclesPage() {
               Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredVehicles.length)} of {filteredVehicles.length} vehicles
             </p>
             <div className="flex items-center gap-2 order-1 sm:order-2">
-              <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="p-2 bg-slate-800/50 border border-yellow-500/20 rounded-lg hover:bg-slate-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+              <button 
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
+                disabled={currentPage === 1} 
+                className="p-2 bg-slate-800/50 border border-yellow-500/20 rounded-lg hover:bg-slate-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <div className="flex gap-1">
@@ -719,19 +728,183 @@ export default function VehiclesPage() {
                   else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
                   else pageNum = currentPage - 2 + i;
                   return (
-                    <button key={pageNum} onClick={() => setCurrentPage(pageNum)} className={`w-8 h-8 rounded-lg text-sm transition ${currentPage === pageNum ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-black font-medium' : 'bg-slate-800/50 border border-yellow-500/20 text-gray-400 hover:text-white'}`}>
+                    <button 
+                      key={pageNum} 
+                      onClick={() => setCurrentPage(pageNum)} 
+                      className={`w-8 h-8 rounded-lg text-sm transition ${currentPage === pageNum ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-black font-medium' : 'bg-slate-800/50 border border-yellow-500/20 text-gray-400 hover:text-white'}`}
+                    >
                       {pageNum}
                     </button>
                   );
                 })}
               </div>
-              <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="p-2 bg-slate-800/50 border border-yellow-500/20 rounded-lg hover:bg-slate-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+              <button 
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} 
+                disabled={currentPage === totalPages} 
+                className="p-2 bg-slate-800/50 border border-yellow-500/20 rounded-lg hover:bg-slate-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </div>
         )}
       </div>
+
+      {/* Vehicle Details Modal */}
+      {showDetailsModal && selectedVehicle && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-gradient-to-b from-slate-900 to-slate-950 rounded-2xl border border-yellow-500/20 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="sticky top-0 bg-slate-900/95 backdrop-blur-sm border-b border-yellow-500/20 p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-xl flex items-center justify-center">
+                    <Truck className="w-6 h-6 text-black" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-white">{selectedVehicle.plateNumber}</h2>
+                    <p className="text-sm text-gray-400">{selectedVehicle.model}</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowDetailsModal(false)} className="p-2 hover:bg-slate-800 rounded-lg transition">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-6">
+              {/* Vehicle Details Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-slate-800/30 rounded-xl p-4 border border-yellow-500/20">
+                  <h3 className="text-sm font-semibold text-yellow-400 mb-3 flex items-center gap-2">
+                    <Info className="w-4 h-4" />
+                    Vehicle Information
+                  </h3>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Plate Number</span>
+                      <span className="text-sm font-medium text-white">{selectedVehicle.plateNumber}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Model</span>
+                      <span className="text-sm font-medium text-white">{selectedVehicle.model}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Capacity</span>
+                      <span className="text-sm font-medium text-white">{selectedVehicle.capacity} seats</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Status</span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(selectedVehicle.status)}`}>
+                        {getStatusIcon(selectedVehicle.status)}
+                        {selectedVehicle.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Added On</span>
+                      <span className="text-sm font-medium text-white">
+                        {new Date(selectedVehicle.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-800/30 rounded-xl p-4 border border-yellow-500/20">
+                  <h3 className="text-sm font-semibold text-yellow-400 mb-3 flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    Driver Information
+                  </h3>
+                  {selectedVehicle.driver ? (
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-sm text-gray-400">Name</span>
+                        <span className="text-sm font-medium text-white">{selectedVehicle.driver.user.name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-gray-400">Email</span>
+                        <span className="text-sm font-medium text-white">{selectedVehicle.driver.user.email}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-gray-400">Phone</span>
+                        <span className="text-sm font-medium text-white">{selectedVehicle.driver.user.phone || 'N/A'}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">No driver assigned</p>
+                  )}
+                </div>
+
+                <div className="bg-slate-800/30 rounded-xl p-4 border border-yellow-500/20">
+                  <h3 className="text-sm font-semibold text-yellow-400 mb-3 flex items-center gap-2">
+                    <Activity className="w-4 h-4" />
+                    Performance Metrics
+                  </h3>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Total Trips</span>
+                      <span className="text-sm font-medium text-white">{selectedVehicle._count?.trips || 0}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Income Logs</span>
+                      <span className="text-sm font-medium text-green-400">{selectedVehicle._count?.incomeLogs || 0}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Expenses</span>
+                      <span className="text-sm font-medium text-rose-400">{selectedVehicle._count?.expenses || 0}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Maintenance Records</span>
+                      <span className="text-sm font-medium text-white">{selectedVehicle._count?.maintenance || 0}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Active Alerts</span>
+                      <span className="text-sm font-medium text-amber-400">{selectedVehicle._count?.alerts || 0}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-800/30 rounded-xl p-4 border border-yellow-500/20">
+                  <h3 className="text-sm font-semibold text-yellow-400 mb-3 flex items-center gap-2">
+                    <FileText className="w-4 h-4" />
+                    Documents
+                  </h3>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Documents</span>
+                      <span className="text-sm font-medium text-white">{selectedVehicle._count?.documents || 0}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-4 border-t border-yellow-500/20">
+                <button
+                  onClick={() => {
+                    setShowDetailsModal(false);
+                    handleEdit(selectedVehicle.id);
+                  }}
+                  className="flex-1 px-4 py-2 bg-blue-500/20 text-blue-400 rounded-xl font-medium hover:bg-blue-500/30 transition flex items-center justify-center gap-2"
+                >
+                  <Edit className="w-4 h-4" />
+                  Edit Vehicle
+                </button>
+                <button
+                  onClick={() => {
+                    setShowDetailsModal(false);
+                    handleDeleteClick(selectedVehicle);
+                  }}
+                  className="flex-1 px-4 py-2 bg-rose-500/20 text-rose-400 rounded-xl font-medium hover:bg-rose-500/30 transition flex items-center justify-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete Vehicle
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && vehicleToDelete && (
@@ -760,11 +933,26 @@ export default function VehiclesPage() {
                   Assigned to: {vehicleToDelete.driver.user.name}
                 </p>
               )}
+              {(vehicleToDelete._count?.trips || 0) > 0 && (
+                <p className="text-xs text-amber-400 mt-2 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  This vehicle has {vehicleToDelete._count?.trips} trip records that will be affected
+                </p>
+              )}
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setShowDeleteModal(false)} className="flex-1 px-4 py-2 border border-gray-700 rounded-xl text-gray-300 font-medium hover:bg-gray-800 transition">Cancel</button>
+              <button onClick={() => setShowDeleteModal(false)} className="flex-1 px-4 py-2 border border-gray-700 rounded-xl text-gray-300 font-medium hover:bg-gray-800 transition">
+                Cancel
+              </button>
               <button onClick={handleDeleteConfirm} disabled={deleteLoading} className="flex-1 px-4 py-2 bg-rose-500/20 text-rose-400 rounded-xl font-medium hover:bg-rose-500/30 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                {deleteLoading ? <><div className="w-4 h-4 border-2 border-rose-400 border-t-transparent rounded-full animate-spin"></div>Deleting...</> : 'Delete Vehicle'}
+                {deleteLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete Vehicle'
+                )}
               </button>
             </div>
           </div>
@@ -772,7 +960,10 @@ export default function VehiclesPage() {
       )}
 
       <style jsx>{`
-        @keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        @keyframes pulse {
+          0%, 100% { opacity: 0.5; }
+          50% { opacity: 1; }
+        }
         .animate-pulse { animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
         .animation-delay-2000 { animation-delay: 2s; }
       `}</style>

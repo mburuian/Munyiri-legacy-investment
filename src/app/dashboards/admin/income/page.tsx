@@ -1,4 +1,3 @@
-// app/dashboards/admin/income/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -11,28 +10,48 @@ import {
   CircleDollarSign,
   Calendar,
   Download,
-  Filter,
   Search,
   ChevronDown,
   ChevronUp,
-  Eye,
-  PieChart,
-  BarChart3,
-  Fuel,
-  Wrench,
   Receipt,
-  DollarSign,
-  Truck,
-  Package,
-  Users,
-  Clock,
-  Award,
+  Loader2,
   AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Loader2
+  DollarSign,
+  BarChart3,
+  Users
 } from 'lucide-react';
 import { auth } from '../../../../lib/firebase/config';
+
+interface IncomeLog {
+  id: string;
+  amount: number;
+  type: string;
+  description: string;
+  date: string;
+  driver: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+  vehicle: {
+    id: string;
+    plateNumber: string;
+    model: string;
+  } | null;
+  tripStart?: string | null;
+  tripEnd?: string | null;
+  distanceKm?: number | null;
+}
+
+interface IncomeSummary {
+  total: number;
+  count: number;
+  byType: Array<{
+    type: string;
+    total: number;
+    count: number;
+  }>;
+}
 
 interface VehicleIncome {
   vehicleId: string;
@@ -64,44 +83,16 @@ interface VehicleIncome {
   }[];
 }
 
-interface IncomeSummary {
-  totalIncome: number;
-  totalTrips: number;
-  totalDistance: number;
-  activeVehicles: number;
-  avgIncomePerVehicle: number;
-  avgIncomePerTrip: number;
-  avgIncomePerKm: number;
-  thisMonthIncome: number;
-  lastMonthIncome: number;
-  monthlyGrowth: number;
-  topVehicle: {
-    plateNumber: string;
-    income: number;
-  } | null;
-  incomeByStatus: {
-    active: number;
-    maintenance: number;
-    inactive: number;
-  };
-  incomeByDateRange: {
-    today: number;
-    week: number;
-    month: number;
-    year: number;
-  };
-}
-
 export default function IncomePage() {
   const [loading, setLoading] = useState(true);
-  const [vehiclesIncome, setVehiclesIncome] = useState<VehicleIncome[]>([]);
+  const [incomeLogs, setIncomeLogs] = useState<IncomeLog[]>([]);
   const [summary, setSummary] = useState<IncomeSummary | null>(null);
+  const [vehiclesIncome, setVehiclesIncome] = useState<VehicleIncome[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'income' | 'trips' | 'plateNumber'>('income');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'year' | 'all'>('month');
-  const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null);
   const [expandedVehicle, setExpandedVehicle] = useState<string | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
 
@@ -127,7 +118,47 @@ export default function IncomePage() {
       
       const token = await user.getIdToken();
       
-      const response = await fetch(`/api/admin/income?range=${dateRange}`, {
+      // Calculate date range
+      const now = new Date();
+      let startDate: Date | null = null;
+      let endDate: Date | null = null;
+      
+      switch (dateRange) {
+        case 'today':
+          startDate = new Date(now.setHours(0, 0, 0, 0));
+          endDate = new Date(now.setHours(23, 59, 59, 999));
+          break;
+        case 'week':
+          const weekStart = new Date(now);
+          weekStart.setDate(now.getDate() - now.getDay());
+          weekStart.setHours(0, 0, 0, 0);
+          startDate = weekStart;
+          endDate = new Date();
+          break;
+        case 'month':
+          const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+          startDate = monthStart;
+          endDate = new Date();
+          break;
+        case 'year':
+          const yearStart = new Date(now.getFullYear(), 0, 1);
+          startDate = yearStart;
+          endDate = new Date();
+          break;
+        default:
+          startDate = null;
+          endDate = null;
+      }
+      
+      let url = '/api/admin/income?limit=100';
+      if (startDate) {
+        url += `&startDate=${startDate.toISOString()}`;
+      }
+      if (endDate) {
+        url += `&endDate=${endDate.toISOString()}`;
+      }
+      
+      const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -138,11 +169,70 @@ export default function IncomePage() {
       }
       
       const data = await response.json();
-      setVehiclesIncome(data.vehicles);
-      setSummary(data.summary);
+      setIncomeLogs(data.items || []);
+      setSummary(data.summary || { total: 0, count: 0, byType: [] });
+      
+      // Process vehicles data from income logs
+      const vehiclesMap = new Map<string, VehicleIncome>();
+      
+      (data.items || []).forEach((log: IncomeLog) => {
+        if (log.vehicle) {
+          const vehicleId = log.vehicle.id;
+          if (!vehiclesMap.has(vehicleId)) {
+            vehiclesMap.set(vehicleId, {
+              vehicleId: vehicleId,
+              plateNumber: log.vehicle.plateNumber,
+              model: log.vehicle.model,
+              status: 'active',
+              totalIncome: 0,
+              totalTrips: 0,
+              totalDistance: 0,
+              avgFarePerTrip: 0,
+              avgIncomePerKm: 0,
+              monthlyTrend: [],
+              topEarningDays: [],
+              recentTrips: []
+            });
+          }
+          
+          const vehicle = vehiclesMap.get(vehicleId)!;
+          vehicle.totalIncome += log.amount;
+          vehicle.totalTrips++;
+          if (log.distanceKm) {
+            vehicle.totalDistance += log.distanceKm;
+          }
+          
+          // Add to recent trips
+          vehicle.recentTrips.push({
+            id: log.id,
+            date: log.date,
+            from: log.tripStart ? new Date(log.tripStart).toLocaleTimeString() : 'Start',
+            to: log.tripEnd ? new Date(log.tripEnd).toLocaleTimeString() : 'End',
+            fare: log.amount,
+            distance: log.distanceKm || 0
+          });
+          
+          // Sort recent trips by date
+          vehicle.recentTrips.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          vehicle.recentTrips = vehicle.recentTrips.slice(0, 10);
+          
+          // Calculate averages
+          vehicle.avgFarePerTrip = vehicle.totalIncome / vehicle.totalTrips;
+          vehicle.avgIncomePerKm = vehicle.totalDistance > 0 ? vehicle.totalIncome / vehicle.totalDistance : 0;
+        }
+      });
+      
+      // Convert map to array and sort by income
+      const vehiclesArray = Array.from(vehiclesMap.values())
+        .sort((a, b) => b.totalIncome - a.totalIncome);
+      
+      setVehiclesIncome(vehiclesArray);
+      
     } catch (err) {
       console.error('Error fetching income data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load income data');
+      setIncomeLogs([]);
+      setVehiclesIncome([]);
     } finally {
       setLoading(false);
     }
@@ -154,15 +244,24 @@ export default function IncomePage() {
       const user = auth.currentUser;
       const token = await user?.getIdToken();
       
-      const response = await fetch(`/api/admin/income/export?range=${dateRange}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      // Create CSV data
+      const csvRows = [
+        ['Vehicle', 'Total Income', 'Total Trips', 'Avg per Trip', 'Total Distance', 'Avg per km']
+      ];
+      
+      vehiclesIncome.forEach(vehicle => {
+        csvRows.push([
+          vehicle.plateNumber,
+          vehicle.totalIncome.toString(),
+          vehicle.totalTrips.toString(),
+          vehicle.avgFarePerTrip.toFixed(2),
+          vehicle.totalDistance.toString(),
+          vehicle.avgIncomePerKm.toFixed(2)
+        ]);
       });
       
-      if (!response.ok) throw new Error('Export failed');
-      
-      const blob = await response.blob();
+      const csvContent = csvRows.map(row => row.join(',')).join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -188,33 +287,29 @@ export default function IncomePage() {
   };
 
   const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'active':
-        return 'bg-green-500/20 text-green-400 border border-green-500/30';
-      case 'maintenance':
-        return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
-      case 'inactive':
-        return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
-      default:
-        return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
-    }
+    return 'bg-green-500/20 text-green-400 border border-green-500/30';
   };
 
-  const filteredAndSortedVehicles = vehiclesIncome
-    .filter(vehicle => 
-      vehicle.plateNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      vehicle.model.toLowerCase().includes(searchTerm.toLowerCase())
-    )
+  // Safe filtering
+  const filteredAndSortedVehicles = (vehiclesIncome || [])
+    .filter(vehicle => {
+      if (!vehicle) return false;
+      const searchLower = searchTerm.toLowerCase();
+      return (
+        (vehicle.plateNumber?.toLowerCase() || '').includes(searchLower) ||
+        (vehicle.model?.toLowerCase() || '').includes(searchLower)
+      );
+    })
     .sort((a, b) => {
       if (sortBy === 'income') {
-        return sortOrder === 'desc' ? b.totalIncome - a.totalIncome : a.totalIncome - b.totalIncome;
+        return sortOrder === 'desc' ? (b.totalIncome || 0) - (a.totalIncome || 0) : (a.totalIncome || 0) - (b.totalIncome || 0);
       }
       if (sortBy === 'trips') {
-        return sortOrder === 'desc' ? b.totalTrips - a.totalTrips : a.totalTrips - b.totalTrips;
+        return sortOrder === 'desc' ? (b.totalTrips || 0) - (a.totalTrips || 0) : (a.totalTrips || 0) - (b.totalTrips || 0);
       }
       return sortOrder === 'desc' 
-        ? b.plateNumber.localeCompare(a.plateNumber)
-        : a.plateNumber.localeCompare(b.plateNumber);
+        ? (b.plateNumber || '').localeCompare(a.plateNumber || '')
+        : (a.plateNumber || '').localeCompare(b.plateNumber || '');
     });
 
   if (loading) {
@@ -303,26 +398,8 @@ export default function IncomePage() {
                 <p className="text-gray-400 text-sm">Total Income</p>
                 <CircleDollarSign className="w-5 h-5 text-green-400" />
               </div>
-              <p className="text-3xl font-bold text-green-400">{formatCurrency(summary.totalIncome)}</p>
-              <div className="flex items-center gap-2 mt-2 text-sm">
-                {summary.monthlyGrowth >= 0 ? (
-                  <TrendingUp className="w-4 h-4 text-green-400" />
-                ) : (
-                  <TrendingDown className="w-4 h-4 text-rose-400" />
-                )}
-                <span className={summary.monthlyGrowth >= 0 ? 'text-green-400' : 'text-rose-400'}>
-                  {Math.abs(summary.monthlyGrowth).toFixed(1)}% from last month
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-slate-800/50 backdrop-blur-sm border border-green-500/20 rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-gray-400 text-sm">Total Trips</p>
-                <TrendingUp className="w-5 h-5 text-blue-400" />
-              </div>
-              <p className="text-3xl font-bold">{formatNumber(summary.totalTrips)}</p>
-              <p className="text-sm text-gray-500 mt-2">Avg: {formatCurrency(summary.avgIncomePerTrip)} per trip</p>
+              <p className="text-3xl font-bold text-green-400">{formatCurrency(summary.total)}</p>
+              <p className="text-sm text-gray-500 mt-2">From {summary.count} transactions</p>
             </div>
 
             <div className="bg-slate-800/50 backdrop-blur-sm border border-green-500/20 rounded-2xl p-6">
@@ -330,19 +407,28 @@ export default function IncomePage() {
                 <p className="text-gray-400 text-sm">Active Vehicles</p>
                 <Car className="w-5 h-5 text-yellow-400" />
               </div>
-              <p className="text-3xl font-bold">{summary.activeVehicles}</p>
-              <p className="text-sm text-gray-500 mt-2">Avg: {formatCurrency(summary.avgIncomePerVehicle)} per vehicle</p>
+              <p className="text-3xl font-bold">{vehiclesIncome.length}</p>
+              <p className="text-sm text-gray-500 mt-2">Vehicles with income</p>
             </div>
 
             <div className="bg-slate-800/50 backdrop-blur-sm border border-green-500/20 rounded-2xl p-6">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-gray-400 text-sm">This Month</p>
-                <Calendar className="w-5 h-5 text-purple-400" />
+                <p className="text-gray-400 text-sm">Total Trips</p>
+                <TrendingUp className="w-5 h-5 text-blue-400" />
               </div>
-              <p className="text-3xl font-bold text-purple-400">{formatCurrency(summary.thisMonthIncome)}</p>
-              <p className="text-sm text-gray-500 mt-2">
-                {formatCurrency(summary.lastMonthIncome)} last month
+              <p className="text-3xl font-bold">{formatNumber(summary.count)}</p>
+              <p className="text-sm text-gray-500 mt-2">Income generating trips</p>
+            </div>
+
+            <div className="bg-slate-800/50 backdrop-blur-sm border border-green-500/20 rounded-2xl p-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-gray-400 text-sm">Average per Trip</p>
+                <BarChart3 className="w-5 h-5 text-purple-400" />
+              </div>
+              <p className="text-3xl font-bold text-purple-400">
+                {formatCurrency(summary.count > 0 ? summary.total / summary.count : 0)}
               </p>
+              <p className="text-sm text-gray-500 mt-2">Per transaction</p>
             </div>
           </div>
         )}
@@ -350,7 +436,7 @@ export default function IncomePage() {
         {/* Controls */}
         <div className="bg-slate-800/50 backdrop-blur-sm border border-green-500/20 rounded-2xl p-4 mb-6">
           <div className="flex flex-wrap gap-4 items-center justify-between">
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <button
                 onClick={() => setDateRange('today')}
                 className={`px-4 py-2 rounded-xl transition ${
@@ -403,7 +489,7 @@ export default function IncomePage() {
               </button>
             </div>
             
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
                 <input
@@ -459,16 +545,16 @@ export default function IncomePage() {
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <h3 className="text-lg font-bold">{vehicle.plateNumber}</h3>
+                          <h3 className="text-lg font-bold">{vehicle.plateNumber || 'N/A'}</h3>
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(vehicle.status)}`}>
-                            {vehicle.status}
+                            Active
                           </span>
                         </div>
-                        <p className="text-sm text-gray-500">{vehicle.model}</p>
+                        <p className="text-sm text-gray-500">{vehicle.model || 'N/A'}</p>
                       </div>
                     </div>
                     
-                    <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-6 flex-wrap">
                       <div className="text-right">
                         <p className="text-xs text-gray-500">Total Income</p>
                         <p className="text-xl font-bold text-green-400">{formatCurrency(vehicle.totalIncome)}</p>
@@ -510,78 +596,43 @@ export default function IncomePage() {
                             <p className="text-lg font-bold">{formatCurrency(vehicle.avgIncomePerKm)}</p>
                           </div>
                         </div>
-
-                        {/* Monthly Trend */}
-                        <div>
-                          <h5 className="text-sm font-medium mb-3">Monthly Trend</h5>
-                          <div className="space-y-2">
-                            {vehicle.monthlyTrend.map((month, idx) => (
-                              <div key={idx} className="flex items-center justify-between text-sm">
-                                <span className="text-gray-400">{month.month}</span>
-                                <div className="flex-1 mx-4">
-                                  <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                                    <div 
-                                      className="h-full bg-green-400 rounded-full"
-                                      style={{ width: `${(month.income / vehicle.totalIncome) * 100}%` }}
-                                    />
-                                  </div>
-                                </div>
-                                <span className="text-green-400">{formatCurrency(month.income)}</span>
-                                <span className="text-gray-500 ml-2 w-12">{month.trips} trips</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Top Earning Days */}
-                        <div>
-                          <h5 className="text-sm font-medium mb-3">Top Earning Days</h5>
-                          <div className="space-y-2">
-                            {vehicle.topEarningDays.slice(0, 5).map((day, idx) => (
-                              <div key={idx} className="flex items-center justify-between text-sm p-2 bg-slate-700/20 rounded-lg">
-                                <span className="text-gray-400">{new Date(day.date).toLocaleDateString()}</span>
-                                <span className="text-green-400">{formatCurrency(day.income)}</span>
-                                <span className="text-gray-500">{day.trips} trips</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
                       </div>
 
                       {/* Recent Trips */}
-                      <div>
-                        <h4 className="font-semibold flex items-center gap-2 mb-3">
-                          <Receipt className="w-4 h-4 text-green-400" />
-                          Recent Trips
-                        </h4>
-                        <div className="space-y-2 max-h-96 overflow-y-auto">
-                          {vehicle.recentTrips.map((trip) => (
-                            <Link
-                              key={trip.id}
-                              href={`/dashboards/admin/trips/${trip.id}`}
-                              className="block p-3 bg-slate-700/30 rounded-xl hover:bg-slate-700/50 transition border border-green-500/10"
-                            >
-                              <div className="flex items-center justify-between mb-1">
-                                <div className="flex items-center gap-2">
-                                  <Calendar className="w-3 h-3 text-gray-500" />
-                                  <span className="text-xs text-gray-500">
-                                    {new Date(trip.date).toLocaleDateString()}
+                      {vehicle.recentTrips && vehicle.recentTrips.length > 0 && (
+                        <div>
+                          <h4 className="font-semibold flex items-center gap-2 mb-3">
+                            <Receipt className="w-4 h-4 text-green-400" />
+                            Recent Trips
+                          </h4>
+                          <div className="space-y-2 max-h-96 overflow-y-auto">
+                            {vehicle.recentTrips.slice(0, 10).map((trip) => (
+                              <div
+                                key={trip.id}
+                                className="p-3 bg-slate-700/30 rounded-xl border border-green-500/10"
+                              >
+                                <div className="flex items-center justify-between mb-1">
+                                  <div className="flex items-center gap-2">
+                                    <Calendar className="w-3 h-3 text-gray-500" />
+                                    <span className="text-xs text-gray-500">
+                                      {new Date(trip.date).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                  <span className="text-sm font-semibold text-green-400">
+                                    {formatCurrency(trip.fare)}
                                   </span>
                                 </div>
-                                <span className="text-sm font-semibold text-green-400">
-                                  {formatCurrency(trip.fare)}
-                                </span>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm">
+                                    {trip.from} → {trip.to}
+                                  </span>
+                                  <span className="text-xs text-gray-500">{trip.distance || 0} km</span>
+                                </div>
                               </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm">
-                                  {trip.from} → {trip.to}
-                                </span>
-                                <span className="text-xs text-gray-500">{trip.distance} km</span>
-                              </div>
-                            </Link>
-                          ))}
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   </div>
                 )}

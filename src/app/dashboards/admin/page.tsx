@@ -58,7 +58,8 @@ import {
   Battery,
   BatteryFull,
   BatteryMedium,
-  BatteryLow
+  BatteryLow,
+  Image as ImageIcon
 } from "lucide-react";
 import { auth } from '../../../lib/firebase/config';
 
@@ -79,6 +80,16 @@ interface DashboardStats {
   pendingAlerts: number;
 }
 
+interface VehicleImage {
+  id: string;
+  url: string;
+  type: string;
+  isPrimary: boolean;
+  fileName: string;
+  fileType: string;
+  createdAt: string;
+}
+
 interface Vehicle {
   id: string;
   plateNumber: string;
@@ -87,6 +98,7 @@ interface Vehicle {
   fuelLevel?: number;
   nextService?: string;
   insuranceExpiry?: string;
+  images?: VehicleImage[];
   driver?: {
     user: {
       name: string;
@@ -200,6 +212,7 @@ export default function AdminDashboard() {
   const [notifications, setNotifications] = useState<Alert[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [logoError, setLogoError] = useState(false);
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setMounted(true);
@@ -277,34 +290,133 @@ export default function AdminDashboard() {
         alertsResponse.ok ? alertsResponse.json() : Promise.resolve({ items: [] })
       ]);
 
-      if (statsData?.stats) {
+      // Handle stats data
+      if (statsData) {
+        const statsObj = statsData.stats || statsData;
         setStats({
-          incomeToday: statsData.stats.income?.today || 0,
-          incomeWeek: statsData.stats.income?.week || 0,
-          incomeMonth: statsData.stats.income?.month || 0,
-          expensesToday: statsData.stats.expenses?.today || 0,
-          expensesWeek: statsData.stats.expenses?.week || 0,
-          expensesMonth: statsData.stats.expenses?.month || 0,
-          netProfit: statsData.stats.profit?.month || 0,
-          activeVehicles: statsData.stats.vehicles?.active || 0,
-          maintenanceVehicles: statsData.stats.vehicles?.maintenance || 0,
-          totalVehicles: statsData.stats.vehicles?.total || 0,
-          activeDrivers: statsData.stats.users?.activeDrivers || 0,
-          totalDrivers: statsData.stats.users?.drivers || 0,
-          pendingAlerts: statsData.stats.alerts?.active || 0
+          incomeToday: statsObj.income?.today || statsData.incomeToday || 0,
+          incomeWeek: statsObj.income?.week || statsData.incomeWeek || 0,
+          incomeMonth: statsObj.income?.month || statsData.incomeMonth || 0,
+          expensesToday: statsObj.expenses?.today || statsData.expensesToday || 0,
+          expensesWeek: statsObj.expenses?.week || statsData.expensesWeek || 0,
+          expensesMonth: statsObj.expenses?.month || statsData.expensesMonth || 0,
+          netProfit: statsObj.profit?.month || statsData.netProfit || 0,
+          activeVehicles: statsObj.vehicles?.active || statsData.activeVehicles || 0,
+          maintenanceVehicles: statsObj.vehicles?.maintenance || statsData.maintenanceVehicles || 0,
+          totalVehicles: statsObj.vehicles?.total || statsData.totalVehicles || 0,
+          activeDrivers: statsObj.users?.activeDrivers || statsData.activeDrivers || 0,
+          totalDrivers: statsObj.users?.drivers || statsData.totalDrivers || 0,
+          pendingAlerts: statsObj.alerts?.active || statsData.pendingAlerts || 0
         });
       }
       
-      setVehicles(vehiclesData.items || []);
-      setDrivers(driversData.items || []);
-      setIncomeLogs(incomeData.items || []);
-      setExpenseLogs(expenseData.items || []);
-      setAlerts(alertsData.items || []);
-      setNotifications(alertsData.items || []);
+      // Handle vehicles data
+      let vehiclesArray: Vehicle[] = [];
+      if (vehiclesData) {
+        if (Array.isArray(vehiclesData)) {
+          vehiclesArray = vehiclesData;
+        } else if (vehiclesData.items && Array.isArray(vehiclesData.items)) {
+          vehiclesArray = vehiclesData.items;
+        } else if (vehiclesData.vehicles && Array.isArray(vehiclesData.vehicles)) {
+          vehiclesArray = vehiclesData.vehicles;
+        }
+      }
+      
+      console.log('Vehicles loaded:', vehiclesArray.length);
+      
+      // Fetch images for each vehicle
+      const vehiclesWithImages = await Promise.all(
+        vehiclesArray.map(async (vehicle) => {
+          try {
+            console.log(`Fetching images for vehicle ${vehicle.id} - ${vehicle.plateNumber}`);
+            const imagesResponse = await fetch(`/api/upload?entityType=vehicle&entityId=${vehicle.id}`, {
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if (imagesResponse.ok) {
+              const imagesData = await imagesResponse.json();
+              console.log(`Images for vehicle ${vehicle.id} (${vehicle.plateNumber}):`, imagesData.images?.length || 0, 'images');
+              if (imagesData.images && imagesData.images.length > 0) {
+                console.log(`First image URL preview:`, imagesData.images[0].url?.substring(0, 100));
+              }
+              return { ...vehicle, images: imagesData.images || [] };
+            } else {
+              console.error(`Failed to fetch images for vehicle ${vehicle.id}: ${imagesResponse.status}`);
+            }
+          } catch (error) {
+            console.error(`Error fetching images for vehicle ${vehicle.id}:`, error);
+          }
+          return { ...vehicle, images: [] };
+        })
+      );
+      
+      console.log('Vehicles with images summary:', vehiclesWithImages.map(v => ({ 
+        id: v.id, 
+        plate: v.plateNumber, 
+        hasImages: (v.images?.length || 0) > 0,
+        imageCount: v.images?.length || 0
+      })));
+      
+      setVehicles(vehiclesWithImages);
+      
+      // Handle drivers data
+      let driversArray: Driver[] = [];
+      if (driversData) {
+        if (Array.isArray(driversData)) {
+          driversArray = driversData;
+        } else if (driversData.items && Array.isArray(driversData.items)) {
+          driversArray = driversData.items;
+        } else if (driversData.drivers && Array.isArray(driversData.drivers)) {
+          driversArray = driversData.drivers;
+        }
+      }
+      setDrivers(driversArray);
+      
+      // Handle income logs
+      let incomeArray: IncomeLog[] = [];
+      if (incomeData) {
+        if (Array.isArray(incomeData)) {
+          incomeArray = incomeData;
+        } else if (incomeData.items && Array.isArray(incomeData.items)) {
+          incomeArray = incomeData.items;
+        }
+      }
+      setIncomeLogs(incomeArray);
+      
+      // Handle expense logs
+      let expenseArray: ExpenseLog[] = [];
+      if (expenseData) {
+        if (Array.isArray(expenseData)) {
+          expenseArray = expenseData;
+        } else if (expenseData.items && Array.isArray(expenseData.items)) {
+          expenseArray = expenseData.items;
+        }
+      }
+      setExpenseLogs(expenseArray);
+      
+      // Handle alerts
+      let alertsArray: Alert[] = [];
+      if (alertsData) {
+        if (Array.isArray(alertsData)) {
+          alertsArray = alertsData;
+        } else if (alertsData.items && Array.isArray(alertsData.items)) {
+          alertsArray = alertsData.items;
+        } else if (alertsData.alerts && Array.isArray(alertsData.alerts)) {
+          alertsArray = alertsData.alerts;
+        }
+      }
+      setAlerts(alertsArray);
+      setNotifications(alertsArray);
       
     } catch (error) {
       console.error('Error loading dashboard data:', error);
       setStats(defaultStats);
+      setVehicles([]);
+      setDrivers([]);
+      setIncomeLogs([]);
+      setExpenseLogs([]);
+      setAlerts([]);
+      setNotifications([]);
     } finally {
       setLoading(false);
     }
@@ -344,6 +456,18 @@ export default function AdminDashboard() {
     const daysUntilService = Math.ceil((new Date(v.nextService).getTime() - new Date().getTime()) / (1000 * 3600 * 24));
     return daysUntilService <= 7 && daysUntilService >= 0;
   });
+
+  const getVehiclePrimaryImage = (vehicle: Vehicle): string | null => {
+    if (vehicle.images && vehicle.images.length > 0) {
+      const primaryImage = vehicle.images.find(img => img.isPrimary);
+      const imageUrl = primaryImage?.url || vehicle.images[0]?.url || null;
+      if (imageUrl) {
+        console.log(`Found image for vehicle ${vehicle.plateNumber}: ${imageUrl.substring(0, 50)}...`);
+      }
+      return imageUrl;
+    }
+    return null;
+  };
 
   if (!mounted) return null;
 
@@ -404,10 +528,9 @@ export default function AdminDashboard() {
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-yellow-400 via-amber-400 to-yellow-400"></div>
         
         <div className="flex flex-col h-full">
-          {/* Logo Area - with your logo.png */}
+          {/* Logo Area */}
           <div className="p-6 border-b border-yellow-500/20">
             <div className="flex items-center gap-3">
-              {/* Logo Image */}
               <div className="relative w-12 h-12 flex-shrink-0">
                 {!logoError ? (
                   <Image
@@ -632,9 +755,9 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* Main Stats Cards - Enhanced with Vehicle & Driver Focus */}
+          {/* Main Stats Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Vehicles Card - Highlighted */}
+            {/* Vehicles Card */}
             <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-sm border-2 border-yellow-400/40 rounded-2xl p-5 hover:shadow-xl hover:shadow-yellow-500/10 transition-all group">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-gray-400 font-medium">Fleet Status</span>
@@ -667,7 +790,7 @@ export default function AdminDashboard() {
               </p>
             </div>
 
-            {/* Drivers Card - Highlighted */}
+            {/* Drivers Card */}
             <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-sm border-2 border-blue-400/40 rounded-2xl p-5 hover:shadow-xl hover:shadow-blue-500/10 transition-all group">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-gray-400 font-medium">Driver Team</span>
@@ -779,12 +902,12 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* Vehicles Table */}
+          {/* Vehicles Table with Images */}
           <div className="bg-slate-800/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-6 border-b border-yellow-500/20">
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <Truck className="w-5 h-5 text-yellow-400" />
-                Fleet Overview
+                Fleet Overview ({vehicles.length} vehicles)
               </h3>
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <button 
@@ -803,9 +926,10 @@ export default function AdminDashboard() {
             <div className="p-4 sm:p-6">
               {vehicles.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[800px]">
+                  <table className="w-full min-w-[900px]">
                     <thead>
                       <tr className="border-b border-yellow-500/20">
+                        <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Image</th>
                         <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Plate Number</th>
                         <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
                         <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Driver</th>
@@ -815,31 +939,71 @@ export default function AdminDashboard() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-yellow-500/10">
-                      {vehicles.slice(0, 5).map((vehicle) => (
-                        <tr key={vehicle.id} className="hover:bg-yellow-500/5 transition-colors">
-                          <td className="py-3 font-medium">{vehicle.plateNumber}</td>
-                          <td className="py-3 text-gray-400">{vehicle.model}</td>
-                          <td className="py-3 text-gray-400">{vehicle.driver?.user?.name || 'Unassigned'}</td>
-                          <td className="py-3">
-                            <StatusBadge status={vehicle.status} />
-                          </td>
-                          <td className="py-3">
-                            <span className={`text-xs ${getServiceStatus(vehicle.nextService)}`}>
-                              {vehicle.nextService ? new Date(vehicle.nextService).toLocaleDateString() : 'Not set'}
-                            </span>
-                          </td>
-                          <td className="py-3">
-                            <div className="flex items-center justify-center gap-2">
-                              <button className="p-1 hover:bg-slate-700 rounded-lg transition">
-                                <Eye className="w-4 h-4 text-gray-400" />
-                              </button>
-                              <button className="p-1 hover:bg-slate-700 rounded-lg transition">
-                                <Edit className="w-4 h-4 text-gray-400" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {vehicles.slice(0, 5).map((vehicle) => {
+                        const primaryImage = getVehiclePrimaryImage(vehicle);
+                        return (
+                          <tr key={vehicle.id} className="hover:bg-yellow-500/5 transition-colors">
+                            <td className="py-3">
+                              {primaryImage ? (
+                                <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-slate-700">
+                                  <img
+                                    src={primaryImage}
+                                    alt={vehicle.plateNumber || 'Vehicle'}
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                      console.error(`Failed to load image for vehicle ${vehicle.plateNumber}:`, primaryImage.substring(0, 100));
+                                      e.currentTarget.style.display = 'none';
+                                      // Show fallback
+                                      const parent = e.currentTarget.parentElement;
+                                      if (parent) {
+                                        const fallback = document.createElement('div');
+                                        fallback.className = 'w-full h-full flex items-center justify-center';
+                                        fallback.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>';
+                                        parent.appendChild(fallback);
+                                        e.currentTarget.remove();
+                                      }
+                                    }}
+                                    onLoad={() => {
+                                      console.log(`Successfully loaded image for vehicle ${vehicle.plateNumber}`);
+                                    }}
+                                  />
+                                </div>
+                              ) : (
+                                <div className="w-12 h-12 rounded-lg bg-slate-700 flex items-center justify-center">
+                                  <ImageIcon className="w-6 h-6 text-gray-500" />
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-3 font-medium">{vehicle.plateNumber || 'N/A'}</td>
+                            <td className="py-3 text-gray-400">{vehicle.model || 'N/A'}</td>
+                            <td className="py-3 text-gray-400">{vehicle.driver?.user?.name || 'Unassigned'}</td>
+                            <td className="py-3">
+                              <StatusBadge status={vehicle.status || 'INACTIVE'} />
+                            </td>
+                            <td className="py-3">
+                              <span className={`text-xs ${getServiceStatus(vehicle.nextService)}`}>
+                                {vehicle.nextService ? new Date(vehicle.nextService).toLocaleDateString() : 'Not set'}
+                              </span>
+                            </td>
+                            <td className="py-3">
+                              <div className="flex items-center justify-center gap-2">
+                                <button 
+                                  onClick={() => router.push(`/dashboards/admin/vehicles/${vehicle.id}`)}
+                                  className="p-1 hover:bg-slate-700 rounded-lg transition"
+                                >
+                                  <Eye className="w-4 h-4 text-gray-400" />
+                                </button>
+                                <button 
+                                  onClick={() => router.push(`/dashboards/admin/vehicles/${vehicle.id}/edit`)}
+                                  className="p-1 hover:bg-slate-700 rounded-lg transition"
+                                >
+                                  <Edit className="w-4 h-4 text-gray-400" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -871,7 +1035,7 @@ export default function AdminDashboard() {
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-6 border-b border-yellow-500/20">
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <Users className="w-5 h-5 text-yellow-400" />
-                Driver Performance
+                Driver Performance ({drivers.length} drivers)
               </h3>
               <button 
                 onClick={handleAddDriver}
@@ -895,22 +1059,22 @@ export default function AdminDashboard() {
                         <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
                         <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Rating</th>
                         <th className="text-center py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
-                       </tr>
+                      </tr>
                     </thead>
                     <tbody className="divide-y divide-yellow-500/10">
                       {drivers.slice(0, 5).map((driver) => (
                         <tr key={driver.id} className="hover:bg-yellow-500/5 transition-colors">
                           <td className="py-3">
                             <div>
-                              <span className="font-medium text-sm">{driver.name}</span>
-                              <p className="text-xs text-gray-500 truncate max-w-[150px]">{driver.email}</p>
+                              <span className="font-medium text-sm">{driver.name || 'N/A'}</span>
+                              <p className="text-xs text-gray-500 truncate max-w-[150px]">{driver.email || 'N/A'}</p>
                             </div>
                           </td>
                           <td className="py-3 text-sm text-gray-400">{driver.assignedVehicle?.plateNumber || 'Unassigned'}</td>
                           <td className="py-3 text-right text-sm font-medium">{(driver.tripsCompleted || 0).toLocaleString()}</td>
                           <td className="py-3 text-right text-sm text-yellow-400">{formatCurrency(driver.totalRevenue || 0)}</td>
                           <td className="py-3">
-                            <DriverStatusBadge status={driver.status} />
+                            <DriverStatusBadge status={driver.status || 'OFF_DUTY'} />
                           </td>
                           <td className="py-3">
                             <div className="flex items-center gap-1">
@@ -920,10 +1084,16 @@ export default function AdminDashboard() {
                           </td>
                           <td className="py-3">
                             <div className="flex items-center justify-center gap-2">
-                              <button className="p-1 hover:bg-slate-700 rounded-lg transition">
+                              <button 
+                                onClick={() => router.push(`/dashboards/admin/drivers/${driver.id}`)}
+                                className="p-1 hover:bg-slate-700 rounded-lg transition"
+                              >
                                 <Eye className="w-4 h-4 text-gray-400" />
                               </button>
-                              <button className="p-1 hover:bg-slate-700 rounded-lg transition">
+                              <button 
+                                onClick={() => router.push(`/dashboards/admin/drivers/${driver.id}/edit`)}
+                                className="p-1 hover:bg-slate-700 rounded-lg transition"
+                              >
                                 <Edit className="w-4 h-4 text-gray-400" />
                               </button>
                             </div>
@@ -948,7 +1118,7 @@ export default function AdminDashboard() {
               
               {drivers.length > 5 && (
                 <div className="mt-4 text-center">
-                  <Link href="/dashboards/admin/drivers" className="text-sm text-yellow-400 hover:text-yellow-300">
+                  <Link href="/dashboards/admin/driver" className="text-sm text-yellow-400 hover:text-yellow-300">
                     View all {drivers.length} drivers →
                   </Link>
                 </div>
@@ -1048,7 +1218,7 @@ const StatusBadge = ({ status }: { status: string }) => {
   
   return (
     <span className={`px-2 py-1 rounded-full text-xs font-medium ${styles[status] || styles.INACTIVE}`}>
-      {status.replace(/_/g, ' ')}
+      {status?.replace(/_/g, ' ') || 'Unknown'}
     </span>
   );
 };
@@ -1064,7 +1234,7 @@ const DriverStatusBadge = ({ status }: { status: string }) => {
   
   return (
     <span className={`px-2 py-1 rounded-full text-xs font-medium ${styles[status] || styles.OFF_DUTY}`}>
-      {status.replace(/_/g, ' ')}
+      {status?.replace(/_/g, ' ') || 'Unknown'}
     </span>
   );
 };

@@ -1,23 +1,24 @@
 // app/api/admin/vehicles/[id]/assign-driver/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '../../../../../../lib/prisma/client';
+import { prisma } from '../../../../../../lib/prisma';
 import { verifyAuth } from '../../../../../../lib/firebase/admin';
 import { DriverStatus, VehicleStatus } from '@prisma/client';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Check authentication
     const auth = await verifyAuth(request);
     if (!auth.authenticated) {
       return NextResponse.json(
-        { error: auth.error }, 
-        { status: auth.status }
+        { error: auth.error || 'Unauthorized' }, 
+        { status: auth.status || 401 }
       );
     }
 
+    const { id } = await params;
     const body = await request.json();
     const { driverId } = body;
 
@@ -30,7 +31,7 @@ export async function POST(
 
     // Check if vehicle exists
     const vehicle = await prisma.vehicle.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: { driver: true }
     });
 
@@ -55,7 +56,7 @@ export async function POST(
     }
 
     // Check if driver is already assigned to another vehicle
-    if (driver.assignedVehicle && driver.assignedVehicle.id !== params.id) {
+    if (driver.assignedVehicle && driver.assignedVehicle.id !== id) {
       return NextResponse.json(
         { error: 'Driver is already assigned to another vehicle' },
         { status: 400 }
@@ -71,14 +72,12 @@ export async function POST(
     }
 
     // Update both vehicle and driver in a transaction
-    // Remove assignedDate if it doesn't exist in your schema
     const [updatedVehicle, updatedDriver] = await prisma.$transaction([
       prisma.vehicle.update({
-        where: { id: params.id },
+        where: { id },
         data: { 
           driverId,
           status: 'ACTIVE' as VehicleStatus
-          // Remove assignedDate if it doesn't exist
         },
         include: {
           driver: {
@@ -93,7 +92,6 @@ export async function POST(
       prisma.driver.update({
         where: { id: driverId },
         data: { 
-          vehicleId: params.id,
           status: 'ACTIVE' as DriverStatus
         }
       })
@@ -104,7 +102,7 @@ export async function POST(
       data: {
         userId: driver.userId,
         title: 'Vehicle Assigned',
-        message: `You have been assigned to vehicle ${vehicle.regNumber}`,
+        message: `You have been assigned to vehicle ${vehicle.plateNumber}`,
         type: 'assignment'
       }
     });
@@ -125,21 +123,23 @@ export async function POST(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Check authentication
     const auth = await verifyAuth(request);
     if (!auth.authenticated) {
       return NextResponse.json(
-        { error: auth.error }, 
-        { status: auth.status }
+        { error: auth.error || 'Unauthorized' }, 
+        { status: auth.status || 401 }
       );
     }
 
+    const { id } = await params;
+
     // Check if vehicle exists and has a driver
     const vehicle = await prisma.vehicle.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: { driver: true }
     });
 
@@ -157,34 +157,40 @@ export async function DELETE(
       );
     }
 
+    // Store driver info before unassigning
+    const driverId = vehicle.driverId!;
+    const driver = await prisma.driver.findUnique({
+      where: { id: driverId },
+      include: { user: true }
+    });
+
     // Remove driver assignment
-    // Remove assignedDate if it doesn't exist
     const [updatedVehicle, updatedDriver] = await prisma.$transaction([
       prisma.vehicle.update({
-        where: { id: params.id },
+        where: { id },
         data: { 
           driverId: null
-          // Remove assignedDate if it doesn't exist
         }
       }),
       prisma.driver.update({
-        where: { id: vehicle.driverId! },
+        where: { id: driverId },
         data: { 
-          vehicleId: null,
           status: 'OFF_DUTY' as DriverStatus
         }
       })
     ]);
 
     // Create notification for driver
-    await prisma.notification.create({
-      data: {
-        userId: updatedDriver.userId,
-        title: 'Vehicle Unassigned',
-        message: `You have been unassigned from vehicle ${vehicle.regNumber}`,
-        type: 'assignment'
-      }
-    });
+    if (driver && driver.user) {
+      await prisma.notification.create({
+        data: {
+          userId: driver.userId,
+          title: 'Vehicle Unassigned',
+          message: `You have been unassigned from vehicle ${vehicle.plateNumber}`,
+          type: 'assignment'
+        }
+      });
+    }
 
     return NextResponse.json({
       message: 'Driver unassigned successfully',
