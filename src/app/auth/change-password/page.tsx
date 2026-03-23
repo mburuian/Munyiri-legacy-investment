@@ -1,7 +1,7 @@
 // app/auth/change-password/page.tsx
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Key, Loader2, AlertCircle, CheckCircle, Shield } from 'lucide-react';
 
@@ -9,7 +9,8 @@ import { Key, Loader2, AlertCircle, CheckCircle, Shield } from 'lucide-react';
 let updatePassword: any = null;
 let getAuth: any = null;
 
-export default function ChangePasswordPage() {
+// Component that uses useSearchParams must be wrapped in Suspense
+function ChangePasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const isFirstLogin = searchParams.get('firstLogin') === 'true';
@@ -260,5 +261,26 @@ export default function ChangePasswordPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Loading fallback for Suspense
+function ChangePasswordFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+// Main page component with Suspense boundary
+export default function ChangePasswordPage() {
+  return (
+    <Suspense fallback={<ChangePasswordFallback />}>
+      <ChangePasswordForm />
+    </Suspense>
   );
 }
