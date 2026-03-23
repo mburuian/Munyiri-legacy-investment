@@ -3,9 +3,11 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { updatePassword } from 'firebase/auth';
 import { Key, Loader2, AlertCircle, CheckCircle, Shield } from 'lucide-react';
-import { auth } from '../../../lib/firebase/config';
+
+// Dynamically import Firebase only on client side
+let updatePassword: any = null;
+let getAuth: any = null;
 
 export default function ChangePasswordPage() {
   const router = useRouter();
@@ -17,11 +19,28 @@ export default function ChangePasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  const [isClient, setIsClient] = useState(false);
+  const [firebaseReady, setFirebaseReady] = useState(false);
+  const [auth, setAuth] = useState<any>(null);
 
-  // Ensure we're on client side
+  // Load Firebase dynamically on client side only
   useEffect(() => {
-    setIsClient(true);
+    const loadFirebase = async () => {
+      try {
+        // Dynamic import of Firebase client
+        const firebaseModule = await import('../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        setAuth(firebaseModule.auth);
+        updatePassword = authModule.updatePassword;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
   }, []);
 
   const validatePassword = (password: string) => {
@@ -46,8 +65,8 @@ export default function ChangePasswordPage() {
     e.preventDefault();
     setError('');
 
-    if (!isClient) {
-      setError('Please wait for page to load');
+    if (!firebaseReady || !auth) {
+      setError('Authentication is initializing. Please wait.');
       return;
     }
 
@@ -64,7 +83,7 @@ export default function ChangePasswordPage() {
     setLoading(true);
 
     try {
-      const user = auth?.currentUser;
+      const user = auth.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -118,8 +137,8 @@ export default function ChangePasswordPage() {
     }
   };
 
-  // Show loading while checking client-side
-  if (!isClient) {
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
