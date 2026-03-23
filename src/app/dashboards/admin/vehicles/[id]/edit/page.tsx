@@ -1,7 +1,7 @@
 // app/dashboards/admin/vehicles/[id]/edit/page.tsx
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -29,13 +29,16 @@ import {
   Plus,
   RefreshCw
 } from "lucide-react";
-import { auth } from '../../../../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 interface VehicleImage {
   id: string;
   url: string;
   type: string;
-  isPrimary: boolean
+  isPrimary: boolean;
   fileName?: string;
   fileType?: string;
 }
@@ -87,7 +90,7 @@ interface Vehicle {
   };
 }
 
-export default function EditVehiclePage() {
+function EditVehicleContent() {
   const router = useRouter();
   const params = useParams();
   const vehicleId = params.id as string;
@@ -102,6 +105,7 @@ export default function EditVehiclePage() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [firebaseReady, setFirebaseReady] = useState(false);
   const [formData, setFormData] = useState({
     plateNumber: '',
     model: '',
@@ -110,9 +114,39 @@ export default function EditVehiclePage() {
     driverId: ''
   });
 
+  // Load Firebase dynamically on client side only
   useEffect(() => {
-    loadData();
-  }, [vehicleId]);
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
+      if (!user) {
+        router.push('/auth/login');
+        return;
+      }
+      loadData();
+    });
+
+    return () => unsubscribe();
+  }, [vehicleId, firebaseReady]);
 
   // Cleanup preview URLs
   useEffect(() => {
@@ -126,7 +160,7 @@ export default function EditVehiclePage() {
       setLoading(true);
       setError(null);
       
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -187,7 +221,7 @@ export default function EditVehiclePage() {
     setSuccess(null);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -262,7 +296,7 @@ export default function EditVehiclePage() {
     setError(null);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -313,7 +347,7 @@ export default function EditVehiclePage() {
     if (!confirm('Are you sure you want to delete this image?')) return;
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -344,7 +378,7 @@ export default function EditVehiclePage() {
 
   const handleSetPrimary = async (imageId: string) => {
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) return;
       
       const token = await user.getIdToken();
@@ -398,6 +432,18 @@ export default function EditVehiclePage() {
     setSelectedFiles(prev => prev.filter((_, i) => i !== index));
     setImagePreviews(prev => prev.filter((_, i) => i !== index));
   };
+
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -559,8 +605,10 @@ export default function EditVehiclePage() {
           {/* Upload New Images */}
           <div>
             <p className="text-sm text-gray-400 mb-3">Add New Images</p>
-            <div className="border-2 border-dashed border-yellow-500/20 rounded-xl p-6 text-center hover:border-yellow-400/50 transition cursor-pointer"
-                 onClick={() => fileInputRef.current?.click()}>
+            <div 
+              className="border-2 border-dashed border-yellow-500/20 rounded-xl p-6 text-center hover:border-yellow-400/50 transition cursor-pointer"
+              onClick={() => fileInputRef.current?.click()}
+            >
               <input
                 ref={fileInputRef}
                 type="file"
@@ -836,5 +884,24 @@ export default function EditVehiclePage() {
         .animation-delay-2000 { animation-delay: 2s; }
       `}</style>
     </div>
+  );
+}
+
+function EditVehicleFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function EditVehiclePage() {
+  return (
+    <Suspense fallback={<EditVehicleFallback />}>
+      <EditVehicleContent />
+    </Suspense>
   );
 }

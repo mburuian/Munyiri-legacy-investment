@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -61,7 +61,10 @@ import {
   BatteryLow,
   Image as ImageIcon
 } from "lucide-react";
-import { auth } from '../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 // Types based on API responses
 interface DashboardStats {
@@ -168,7 +171,7 @@ const defaultStats: DashboardStats = {
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboards/admin", active: true },
   { icon: Truck, label: "Vehicles", href: "/dashboards/admin/vehicles" },
-  { icon: Users, label: "Drivers", href: "/dashboards/admin/driver" },
+  { icon: Users, label: "Drivers", href: "/dashboards/admin/drivers" },
   { icon: DollarSign, label: "Income", href: "/dashboards/admin/income" },
   { icon: FileText, label: "Reports", href: "/dashboards/admin/reports" },
   { icon: Shield, label: "Integrations", href: "/dashboards/admin/integrations" },
@@ -191,7 +194,7 @@ const getInitials = (name: string, email: string) => {
   return email.substring(0, 2).toUpperCase();
 };
 
-export default function AdminDashboard() {
+function DashboardContent() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedTimeframe, setSelectedTimeframe] = useState<'today' | 'week' | 'month'>('month');
@@ -213,10 +216,32 @@ export default function AdminDashboard() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [logoError, setLogoError] = useState(false);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [firebaseReady, setFirebaseReady] = useState(false);
+
+  // Load Firebase dynamically on client side only
+  useEffect(() => {
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
+  }, []);
 
   useEffect(() => {
     setMounted(true);
-    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, async (user: any) => {
       if (!user) {
         router.push('/auth/login');
         return;
@@ -234,13 +259,13 @@ export default function AdminDashboard() {
     });
 
     return () => unsubscribe();
-  }, [router]);
+  }, [firebaseReady, router]);
 
   const loadDashboardData = async () => {
     try {
       setLoading(true);
       
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -424,7 +449,9 @@ export default function AdminDashboard() {
 
   const handleLogout = async () => {
     try {
-      await auth.signOut();
+      if (auth) {
+        await auth.signOut();
+      }
       router.push('/auth/login');
     } catch (error) {
       console.error('Logout error:', error);
@@ -468,6 +495,18 @@ export default function AdminDashboard() {
     }
     return null;
   };
+
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!mounted) return null;
 
@@ -936,7 +975,7 @@ export default function AdminDashboard() {
                         <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
                         <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Next Service</th>
                         <th className="text-center py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
-                      </tr>
+                       </tr>
                     </thead>
                     <tbody className="divide-y divide-yellow-500/10">
                       {vehicles.slice(0, 5).map((vehicle) => {
@@ -953,7 +992,6 @@ export default function AdminDashboard() {
                                     onError={(e) => {
                                       console.error(`Failed to load image for vehicle ${vehicle.plateNumber}:`, primaryImage.substring(0, 100));
                                       e.currentTarget.style.display = 'none';
-                                      // Show fallback
                                       const parent = e.currentTarget.parentElement;
                                       if (parent) {
                                         const fallback = document.createElement('div');
@@ -1118,7 +1156,7 @@ export default function AdminDashboard() {
               
               {drivers.length > 5 && (
                 <div className="mt-4 text-center">
-                  <Link href="/dashboards/admin/driver" className="text-sm text-yellow-400 hover:text-yellow-300">
+                  <Link href="/dashboards/admin/drivers" className="text-sm text-yellow-400 hover:text-yellow-300">
                     View all {drivers.length} drivers →
                   </Link>
                 </div>
@@ -1177,6 +1215,17 @@ export default function AdminDashboard() {
           animation-delay: 2s;
         }
       `}</style>
+    </div>
+  );
+}
+
+function DashboardFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
     </div>
   );
 }
@@ -1272,3 +1321,11 @@ const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label
     </button>
   );
 };
+
+export default function AdminDashboard() {
+  return (
+    <Suspense fallback={<DashboardFallback />}>
+      <DashboardContent />
+    </Suspense>
+  );
+}

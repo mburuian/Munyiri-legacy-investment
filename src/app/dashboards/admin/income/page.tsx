@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -20,7 +20,10 @@ import {
   BarChart3,
   Users
 } from 'lucide-react';
-import { auth } from '../../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 interface IncomeLog {
   id: string;
@@ -83,7 +86,7 @@ interface VehicleIncome {
   }[];
 }
 
-export default function IncomePage() {
+function IncomeContent() {
   const [loading, setLoading] = useState(true);
   const [incomeLogs, setIncomeLogs] = useState<IncomeLog[]>([]);
   const [summary, setSummary] = useState<IncomeSummary | null>(null);
@@ -95,9 +98,32 @@ export default function IncomePage() {
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'year' | 'all'>('month');
   const [expandedVehicle, setExpandedVehicle] = useState<string | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
+  const [firebaseReady, setFirebaseReady] = useState(false);
+
+  // Load Firebase dynamically on client side only
+  useEffect(() => {
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
+  }, []);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
       if (!user) {
         window.location.href = '/auth/login';
         return;
@@ -106,14 +132,14 @@ export default function IncomePage() {
     });
 
     return () => unsubscribe();
-  }, [dateRange]);
+  }, [dateRange, firebaseReady]);
 
   const fetchIncomeData = async () => {
     setLoading(true);
     setError(null);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) throw new Error('Not authenticated');
       
       const token = await user.getIdToken();
@@ -241,7 +267,7 @@ export default function IncomePage() {
   const handleExport = async () => {
     setExportLoading(true);
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       const token = await user?.getIdToken();
       
       // Create CSV data
@@ -311,6 +337,18 @@ export default function IncomePage() {
         ? (b.plateNumber || '').localeCompare(a.plateNumber || '')
         : (a.plateNumber || '').localeCompare(b.plateNumber || '');
     });
+
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-green-400/20 border-t-green-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -655,5 +693,24 @@ export default function IncomePage() {
         }
       `}</style>
     </div>
+  );
+}
+
+function IncomeFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-green-400/20 border-t-green-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function IncomePage() {
+  return (
+    <Suspense fallback={<IncomeFallback />}>
+      <IncomeContent />
+    </Suspense>
   );
 }

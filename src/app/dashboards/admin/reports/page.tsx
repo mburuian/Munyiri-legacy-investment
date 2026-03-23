@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -42,8 +42,10 @@ import {
   Loader2,
   AlertTriangle
 } from 'lucide-react';
-import { auth } from '../../../../lib/firebase/config';
-import { User } from 'firebase/auth';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 // Types
 interface ReportData {
@@ -116,12 +118,7 @@ interface ReportData {
   }>;
 }
 
-interface DateRange {
-  start: Date;
-  end: Date;
-}
-
-export default function ReportsPage() {
+function ReportsContent() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [reportData, setReportData] = useState<ReportData | null>(null);
@@ -136,9 +133,32 @@ export default function ReportsPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [exportFormat, setExportFormat] = useState<'csv' | 'pdf' | 'json'>('csv');
   const [exporting, setExporting] = useState(false);
+  const [firebaseReady, setFirebaseReady] = useState(false);
+
+  // Load Firebase dynamically on client side only
+  useEffect(() => {
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
+  }, []);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user: User | null) => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
       if (!user) {
         window.location.href = '/auth/login';
         return;
@@ -147,7 +167,7 @@ export default function ReportsPage() {
     });
 
     return () => unsubscribe();
-  }, [dateRange, customStartDate, customEndDate, selectedVehicle, selectedDriver]);
+  }, [dateRange, customStartDate, customEndDate, selectedVehicle, selectedDriver, firebaseReady]);
 
   const getDateRangeParams = () => {
     const now = new Date();
@@ -197,7 +217,7 @@ export default function ReportsPage() {
     setError(null);
 
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) throw new Error('Not authenticated');
 
       const token = await user.getIdToken();
@@ -229,7 +249,7 @@ export default function ReportsPage() {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) throw new Error('Not authenticated');
       
       const token = await user.getIdToken();
@@ -285,6 +305,18 @@ export default function ReportsPage() {
     if (profit < 0) return 'text-red-400';
     return 'text-gray-400';
   };
+
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-400/20 border-t-blue-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -548,7 +580,7 @@ export default function ReportsPage() {
                   <th className="text-right p-3 text-xs font-medium text-gray-400">Distance</th>
                   <th className="text-right p-3 text-xs font-medium text-gray-400">Avg/Trip</th>
                   <th className="text-right p-3 text-xs font-medium text-gray-400">Contribution</th>
-                 </tr>
+                  </tr>
               </thead>
               <tbody className="divide-y divide-blue-500/10">
                 {reportData.incomeByVehicle.slice(0, viewMode === 'summary' ? 5 : undefined).map((vehicle) => (
@@ -681,7 +713,7 @@ export default function ReportsPage() {
                   <th className="text-left p-3 text-xs font-medium text-gray-400">Vehicle</th>
                   <th className="text-left p-3 text-xs font-medium text-gray-400">Driver</th>
                   <th className="text-right p-3 text-xs font-medium text-gray-400">Amount</th>
-                 </tr>
+                  </tr>
               </thead>
               <tbody className="divide-y divide-blue-500/10">
                 {reportData.recentTransactions.map((transaction) => (
@@ -738,5 +770,24 @@ export default function ReportsPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+function ReportsFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-blue-400/20 border-t-blue-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function ReportsPage() {
+  return (
+    <Suspense fallback={<ReportsFallback />}>
+      <ReportsContent />
+    </Suspense>
   );
 }

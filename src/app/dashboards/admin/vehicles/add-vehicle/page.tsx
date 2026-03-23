@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -43,6 +43,10 @@ import {
   ChevronLeft,
   ChevronRight
 } from "lucide-react";
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 interface FormData {
   // Basic Information
@@ -106,7 +110,7 @@ const sections = [
   { id: 'images', name: 'Images', icon: Camera },
 ];
 
-export default function AddVehiclePage() {
+function AddVehicleContent() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -116,6 +120,7 @@ export default function AddVehiclePage() {
   const [completedSections, setCompletedSections] = useState<Set<string>>(new Set());
   const [showPreview, setShowPreview] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [firebaseReady, setFirebaseReady] = useState(false);
   
   // Images state
   const [mainImage, setMainImage] = useState<File | null>(null);
@@ -174,6 +179,40 @@ export default function AddVehiclePage() {
     notes: ''
   });
 
+  // Load Firebase dynamically on client side only
+  useEffect(() => {
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
+  }, []);
+
+  // Check authentication
+  useEffect(() => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
+      if (!user) {
+        router.push('/auth/login');
+        return;
+      }
+    });
+
+    return () => unsubscribe();
+  }, [firebaseReady, router]);
+
   // Calculate next service dates based on last service
   useEffect(() => {
     if (formData.lastServiceDate && formData.serviceIntervalMonths) {
@@ -220,13 +259,11 @@ export default function AddVehiclePage() {
   const handleMainImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Validate file size (5MB max)
       if (file.size > 5 * 1024 * 1024) {
         setError('Image size should be less than 5MB');
         return;
       }
       
-      // Validate file type
       if (!file.type.startsWith('image/')) {
         setError('Please upload an image file');
         return;
@@ -244,13 +281,11 @@ export default function AddVehiclePage() {
   const handleAdditionalImagesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     
-    // Validate total files count
     if (additionalImages.length + files.length > 10) {
       setError('Maximum 10 additional images allowed');
       return;
     }
     
-    // Validate each file
     const validFiles = files.filter(file => {
       if (file.size > 5 * 1024 * 1024) {
         setError('Each image should be less than 5MB');
@@ -265,7 +300,6 @@ export default function AddVehiclePage() {
     
     setAdditionalImages(prev => [...prev, ...validFiles]);
     
-    // Create previews
     validFiles.forEach(file => {
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -287,7 +321,6 @@ export default function AddVehiclePage() {
   ) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Validate file size (10MB max for documents)
       if (file.size > 10 * 1024 * 1024) {
         setError('Document size should be less than 10MB');
         return;
@@ -295,7 +328,6 @@ export default function AddVehiclePage() {
       
       setter(file);
       
-      // Create preview for images
       if (file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onloadend = () => {
@@ -303,7 +335,6 @@ export default function AddVehiclePage() {
         };
         reader.readAsDataURL(file);
       } else {
-        // For PDFs, just show the filename
         setPreview(file.name);
       }
     }
@@ -316,7 +347,6 @@ export default function AddVehiclePage() {
       [name]: type === 'number' ? parseFloat(value) || 0 : value,
     }));
     
-    // Clear error when user starts typing
     if (error) setError(null);
   };
 
@@ -360,7 +390,7 @@ export default function AddVehiclePage() {
     }
 
     const data = await response.json();
-    return data.dataUrl; // Returns Base64 string
+    return data.dataUrl;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -436,7 +466,6 @@ export default function AddVehiclePage() {
 
       setSuccess(true);
       
-      // Redirect after 2 seconds
       setTimeout(() => {
         router.push('/dashboards/admin/vehicles');
       }, 2000);
@@ -464,6 +493,18 @@ export default function AddVehiclePage() {
     }
     return null;
   };
+
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-gray-100">
@@ -1482,7 +1523,6 @@ export default function AddVehiclePage() {
                 </>
               )}
               
-              {/* Loading progress bar */}
               {loading && (
                 <div className="absolute bottom-0 left-0 w-full h-1 bg-black/20">
                   <div 
@@ -1537,5 +1577,24 @@ export default function AddVehiclePage() {
         }
       `}</style>
     </div>
+  );
+}
+
+function AddVehicleFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function AddVehiclePage() {
+  return (
+    <Suspense fallback={<AddVehicleFallback />}>
+      <AddVehicleContent />
+    </Suspense>
   );
 }

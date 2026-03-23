@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -70,7 +70,10 @@ import {
   Zap,
   Users2
 } from "lucide-react";
-import { auth } from '../../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 // Types based on API response
 interface Vehicle {
@@ -97,7 +100,7 @@ interface Vehicle {
     trips: number;
     documents: number;
   };
-  images?: { url: string; isPrimary: boolean }[]; // For future image support
+  images?: { url: string; isPrimary: boolean }[];
 }
 
 interface ApiResponse {
@@ -150,7 +153,7 @@ const formatCurrency = (amount: number) => {
   return `KES ${amount.toLocaleString()}`;
 };
 
-export default function VehiclesPage() {
+function VehiclesContent() {
   const router = useRouter();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [filteredVehicles, setFilteredVehicles] = useState<Vehicle[]>([]);
@@ -169,11 +172,42 @@ export default function VehiclesPage() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [firebaseReady, setFirebaseReady] = useState(false);
   const itemsPerPage = 12;
 
+  // Load Firebase dynamically on client side only
   useEffect(() => {
-    loadVehicles();
-  }, [currentPage, statusFilter, searchQuery]);
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
+      if (!user) {
+        router.push('/auth/login');
+        return;
+      }
+      loadVehicles();
+    });
+
+    return () => unsubscribe();
+  }, [firebaseReady, currentPage, statusFilter, searchQuery]);
 
   useEffect(() => {
     let filtered = [...vehicles];
@@ -202,6 +236,8 @@ export default function VehiclesPage() {
   }, [vehicles, searchQuery, statusFilter, sortBy]);
 
   const loadVehicles = async (showRefresh = false) => {
+    if (!auth) return;
+    
     if (showRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
@@ -264,7 +300,7 @@ export default function VehiclesPage() {
   };
 
   const handleDeleteConfirm = async () => {
-    if (!vehicleToDelete) return;
+    if (!vehicleToDelete || !auth) return;
     setDeleteLoading(true);
     
     try {
@@ -312,6 +348,18 @@ export default function VehiclesPage() {
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
+
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -501,7 +549,7 @@ export default function VehiclesPage() {
           </div>
         )}
 
-        {/* Vehicles Display */}
+        {/* Vehicles Display - Grid View */}
         {filteredVehicles.length === 0 ? (
           <div className="text-center py-16">
             <div className="w-24 h-24 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -634,6 +682,7 @@ export default function VehiclesPage() {
             })}
           </div>
         ) : (
+          // List View
           <div className="bg-slate-800/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -645,7 +694,7 @@ export default function VehiclesPage() {
                     <th className="text-left py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Capacity</th>
                     <th className="text-left py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Performance</th>
                     <th className="text-center py-4 px-4 sm:px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
-                  </tr>
+                   </tr>
                 </thead>
                 <tbody className="divide-y divide-yellow-500/10">
                   {paginatedVehicles.map((vehicle) => {
@@ -968,5 +1017,24 @@ export default function VehiclesPage() {
         .animation-delay-2000 { animation-delay: 2s; }
       `}</style>
     </div>
+  );
+}
+
+function VehiclesFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function VehiclesPage() {
+  return (
+    <Suspense fallback={<VehiclesFallback />}>
+      <VehiclesContent />
+    </Suspense>
   );
 }
