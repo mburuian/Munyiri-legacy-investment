@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -50,7 +50,10 @@ import {
   CalendarRange,
   Gauge
 } from "lucide-react";
-import { auth } from '../../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 // Types
 interface Trip {
@@ -89,12 +92,13 @@ interface ApiResponse {
 type DateFilter = 'today' | 'week' | 'month' | 'custom';
 type StatusFilter = 'all' | 'completed' | 'in-progress' | 'cancelled';
 
-export default function TripsPage() {
+function TripsContent() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [firebaseReady, setFirebaseReady] = useState(false);
   
   // Data states
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -115,9 +119,39 @@ export default function TripsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
 
+  // Load Firebase dynamically on client side only
   useEffect(() => {
-    loadTrips();
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
   }, []);
+
+  useEffect(() => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
+      if (!user) {
+        router.push('/auth/login');
+        return;
+      }
+      loadTrips();
+    });
+
+    return () => unsubscribe();
+  }, [firebaseReady]);
 
   const loadTrips = async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
@@ -126,7 +160,7 @@ export default function TripsPage() {
     setError(null);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -296,6 +330,18 @@ export default function TripsPage() {
     setCurrentPage(1);
   };
 
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
@@ -359,7 +405,7 @@ export default function TripsPage() {
             </button>
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center">
               <span className="text-xs sm:text-sm font-bold text-black">
-                {auth.currentUser?.email?.charAt(0).toUpperCase() || 'D'}
+                {auth?.currentUser?.email?.charAt(0).toUpperCase() || 'D'}
               </span>
             </div>
           </div>
@@ -491,7 +537,7 @@ export default function TripsPage() {
                         <th className="text-left p-3 sm:p-4 text-xs sm:text-sm font-medium text-gray-400 hidden sm:table-cell">Distance</th>
                         <th className="text-left p-3 sm:p-4 text-xs sm:text-sm font-medium text-gray-400">Earnings</th>
                         <th className="text-left p-3 sm:p-4 text-xs sm:text-sm font-medium text-gray-400">Status</th>
-                      </tr>
+                       </tr>
                     </thead>
                     <tbody className="divide-y divide-yellow-500/10">
                       {paginatedTrips.map((trip) => (
@@ -507,7 +553,7 @@ export default function TripsPage() {
                               {formatTime(trip.startTime)}
                               {trip.endTime && ` - ${formatTime(trip.endTime)}`}
                             </div>
-                          </td>
+                           </td>
                           <td className="p-3 sm:p-4">
                             <div className="text-xs sm:text-sm max-w-[150px] sm:max-w-[200px] truncate">
                               {trip.from} → {trip.to}
@@ -515,15 +561,15 @@ export default function TripsPage() {
                             {trip.vehicle && (
                               <div className="text-[10px] text-gray-500">{trip.vehicle}</div>
                             )}
-                          </td>
+                           </td>
                           <td className="p-3 sm:p-4 hidden sm:table-cell">
                             <div className="text-sm">{trip.distance} km</div>
-                          </td>
+                           </td>
                           <td className="p-3 sm:p-4">
                             <div className="text-xs sm:text-sm font-bold text-yellow-400">
                               {formatCurrency(trip.earnings)}
                             </div>
-                          </td>
+                           </td>
                           <td className="p-3 sm:p-4">
                             <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] sm:text-xs font-medium border ${getStatusBadge(trip.status)}`}>
                               {trip.status === 'completed' && <CheckCircle className="w-3 h-3" />}
@@ -531,11 +577,11 @@ export default function TripsPage() {
                               {trip.status === 'cancelled' && <X className="w-3 h-3" />}
                               {trip.status}
                             </span>
-                          </td>
-                        </tr>
+                           </td>
+                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                   </table>
                 </div>
               </div>
             ) : (
@@ -720,5 +766,24 @@ export default function TripsPage() {
         )}
       </main>
     </div>
+  );
+}
+
+function TripsFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function TripsPage() {
+  return (
+    <Suspense fallback={<TripsFallback />}>
+      <TripsContent />
+    </Suspense>
   );
 }

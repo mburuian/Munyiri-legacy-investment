@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -67,7 +67,10 @@ import {
   Truck,
   Navigation as NavigationIcon
 } from "lucide-react";
-import { auth } from '../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 // Types
 interface Trip {
@@ -150,7 +153,7 @@ const menuItems = [
   { icon: Settings, label: "Settings", href: "/dashboards/drivers/settings" },
 ];
 
-export default function DriverDashboard() {
+function DriverDashboardContent() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -162,6 +165,7 @@ export default function DriverDashboard() {
   const [stats, setStats] = useState<DriverStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [greeting, setGreeting] = useState("");
+  const [firebaseReady, setFirebaseReady] = useState(false);
   
   // Quick action states
   const [showQuickAction, setShowQuickAction] = useState<QuickAction | null>(null);
@@ -179,12 +183,45 @@ export default function DriverDashboard() {
   const [successMessage, setSuccessMessage] = useState('');
   const [showLiveTracking, setShowLiveTracking] = useState(false);
 
+  // Load Firebase dynamically on client side only
   useEffect(() => {
-    loadDriverData();
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
+      if (!user) {
+        router.push('/auth/login');
+        return;
+      }
+      loadDriverData();
+    });
+
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     setGreeting(getGreeting());
-    return () => clearInterval(timer);
-  }, []);
+    
+    return () => {
+      unsubscribe();
+      clearInterval(timer);
+    };
+  }, [firebaseReady]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -198,7 +235,7 @@ export default function DriverDashboard() {
     setError(null);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -248,7 +285,7 @@ export default function DriverDashboard() {
     setSubmitting(true);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -328,7 +365,9 @@ export default function DriverDashboard() {
 
   const handleLogout = async () => {
     try {
-      await auth.signOut();
+      if (auth) {
+        await auth.signOut();
+      }
       router.push('/auth/login');
     } catch (error) {
       console.error('Logout error:', error);
@@ -365,6 +404,18 @@ export default function DriverDashboard() {
     if (level >= 40) return <BatteryMedium className="w-5 h-5 text-yellow-400" />;
     return <BatteryLow className="w-5 h-5 text-red-400" />;
   };
+
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -1146,5 +1197,24 @@ export default function DriverDashboard() {
         }
       `}</style>
     </div>
+  );
+}
+
+function DriverDashboardFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function DriverDashboard() {
+  return (
+    <Suspense fallback={<DriverDashboardFallback />}>
+      <DriverDashboardContent />
+    </Suspense>
   );
 }

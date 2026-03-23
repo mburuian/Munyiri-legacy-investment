@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -78,7 +78,10 @@ import {
   Eye,
   EyeOff
 } from "lucide-react";
-import { auth } from '../../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 // Types
 interface Vehicle {
@@ -162,12 +165,13 @@ interface ApiResponse {
   stats: VehicleStats;
 }
 
-export default function MyCarPage() {
+function MyCarContent() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [firebaseReady, setFirebaseReady] = useState(false);
   
   // Data states
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
@@ -186,9 +190,39 @@ export default function MyCarPage() {
   });
   const [showAllAlerts, setShowAllAlerts] = useState(false);
 
+  // Load Firebase dynamically on client side only
   useEffect(() => {
-    loadVehicleData();
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
   }, []);
+
+  useEffect(() => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
+      if (!user) {
+        router.push('/auth/login');
+        return;
+      }
+      loadVehicleData();
+    });
+
+    return () => unsubscribe();
+  }, [firebaseReady]);
 
   const loadVehicleData = async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
@@ -197,7 +231,7 @@ export default function MyCarPage() {
     setError(null);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -362,6 +396,18 @@ export default function MyCarPage() {
     return null;
   };
 
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
@@ -454,7 +500,7 @@ export default function MyCarPage() {
             </button>
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center">
               <span className="text-xs sm:text-sm font-bold text-black">
-                {auth.currentUser?.email?.charAt(0).toUpperCase() || 'D'}
+                {auth?.currentUser?.email?.charAt(0).toUpperCase() || 'D'}
               </span>
             </div>
           </div>
@@ -1147,5 +1193,24 @@ export default function MyCarPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+function MyCarFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function MyCarPage() {
+  return (
+    <Suspense fallback={<MyCarFallback />}>
+      <MyCarContent />
+    </Suspense>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -73,7 +73,10 @@ import {
   PieChart,
   BarChart3
 } from "lucide-react";
-import { auth } from '../../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 // Types
 interface Expense {
@@ -135,13 +138,14 @@ const EXPENSE_CATEGORIES = [
   { value: 'other', label: 'Other', icon: OtherIcon, color: 'gray', gradient: 'from-gray-500/20 to-slate-500/20' }
 ];
 
-export default function ExpensesPage() {
+function ExpensesContent() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [firebaseReady, setFirebaseReady] = useState(false);
   
   // Data states
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -190,9 +194,39 @@ export default function ExpensesPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
 
+  // Load Firebase dynamically on client side only
   useEffect(() => {
-    loadExpenses();
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
   }, []);
+
+  useEffect(() => {
+    if (!firebaseReady) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
+      if (!user) {
+        router.push('/auth/login');
+        return;
+      }
+      loadExpenses();
+    });
+
+    return () => unsubscribe();
+  }, [firebaseReady]);
 
   // Auto-hide success message after 3 seconds
   useEffect(() => {
@@ -209,7 +243,7 @@ export default function ExpensesPage() {
     setError(null);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -254,7 +288,7 @@ export default function ExpensesPage() {
     setSubmitting(true);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -314,7 +348,7 @@ export default function ExpensesPage() {
     setSubmitting(true);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -362,7 +396,7 @@ export default function ExpensesPage() {
     setSubmitting(true);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -570,6 +604,18 @@ export default function ExpensesPage() {
     setCustomEndDate('');
     setCurrentPage(1);
   };
+
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -954,7 +1000,7 @@ export default function ExpensesPage() {
             </button>
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center">
               <span className="text-xs sm:text-sm font-bold text-black">
-                {auth.currentUser?.email?.charAt(0).toUpperCase() || 'D'}
+                {auth?.currentUser?.email?.charAt(0).toUpperCase() || 'D'}
               </span>
             </div>
           </div>
@@ -1166,7 +1212,7 @@ export default function ExpensesPage() {
                         <th className="text-left p-3 sm:p-4 text-xs sm:text-sm font-medium text-gray-400">Description</th>
                         <th className="text-left p-3 sm:p-4 text-xs sm:text-sm font-medium text-gray-400">Amount</th>
                         <th className="text-left p-3 sm:p-4 text-xs sm:text-sm font-medium text-gray-400">Status</th>
-                      </tr>
+                       </tr>
                     </thead>
                     <tbody className="divide-y divide-yellow-500/10">
                       {paginatedExpenses.map((expense) => {
@@ -1181,7 +1227,7 @@ export default function ExpensesPage() {
                           >
                             <td className="p-3 sm:p-4">
                               <div className="text-xs sm:text-sm">{formatDate(expense.date)}</div>
-                            </td>
+                             </td>
                             <td className="p-3 sm:p-4">
                               <div className="flex items-center gap-2">
                                 <div className={`p-1.5 rounded-lg ${getCategoryColor(expense.category)}`}>
@@ -1275,7 +1321,7 @@ export default function ExpensesPage() {
                   Daily Expenses
                 </h3>
                 
-                {/* Simple chart representation - you can replace with actual chart library */}
+                {/* Simple chart representation */}
                 <div className="space-y-2">
                   {paginatedExpenses.slice(0, 10).map((expense) => (
                     <div key={expense.id} className="flex items-center gap-2">
@@ -1468,5 +1514,24 @@ export default function ExpensesPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+function ExpensesFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function ExpensesPage() {
+  return (
+    <Suspense fallback={<ExpensesFallback />}>
+      <ExpensesContent />
+    </Suspense>
   );
 }
