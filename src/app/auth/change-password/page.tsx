@@ -1,38 +1,35 @@
-// app/auth/change-password/page.tsx
+// app/auth/admin-login/page.tsx
 "use client";
 
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Key, Loader2, AlertCircle, CheckCircle, Shield } from 'lucide-react';
+import Link from 'next/link';
+import { Shield, Mail, Lock, Loader2, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
 // Dynamically import Firebase only on client side
-let updatePassword: any = null;
-let getAuth: any = null;
+let signInWithEmailAndPassword: any = null;
 
-// Component that uses useSearchParams must be wrapped in Suspense
-function ChangePasswordForm() {
+function AdminLoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const isFirstLogin = searchParams.get('firstLogin') === 'true';
+  const redirect = searchParams.get('redirect') || '/dashboards/admin';
   
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [auth, setAuth] = useState<any>(null);
 
-  // Load Firebase dynamically on client side only
   useEffect(() => {
     const loadFirebase = async () => {
       try {
-        // Dynamic import of Firebase client
         const firebaseModule = await import('../../../lib/firebase/client');
         const authModule = await import('firebase/auth');
         
         setAuth(firebaseModule.auth);
-        updatePassword = authModule.updatePassword;
+        signInWithEmailAndPassword = authModule.signInWithEmailAndPassword;
         setFirebaseReady(true);
       } catch (error) {
         console.error('Failed to load Firebase:', error);
@@ -44,24 +41,6 @@ function ChangePasswordForm() {
     loadFirebase();
   }, []);
 
-  const validatePassword = (password: string) => {
-    const requirements = [
-      { regex: /.{8,}/, message: 'At least 8 characters' },
-      { regex: /[A-Z]/, message: 'One uppercase letter' },
-      { regex: /[a-z]/, message: 'One lowercase letter' },
-      { regex: /[0-9]/, message: 'One number' },
-      { regex: /[^A-Za-z0-9]/, message: 'One special character' }
-    ];
-
-    return requirements.map(req => ({
-      met: req.regex.test(password),
-      message: req.message
-    }));
-  };
-
-  const passwordRequirements = validatePassword(newPassword);
-  const isPasswordValid = passwordRequirements.every(req => req.met);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -71,97 +50,53 @@ function ChangePasswordForm() {
       return;
     }
 
-    if (newPassword !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
-    if (!isPasswordValid) {
-      setError('Please meet all password requirements');
+    if (!email || !password) {
+      setError('Please enter both email and password');
       return;
     }
 
     setLoading(true);
 
     try {
-      const user = auth.currentUser;
-      if (!user) {
-        router.push('/auth/login');
-        return;
-      }
-
-      // Update password in Firebase
-      await updatePassword(user, newPassword);
-
-      // Get ID token to update claims
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
       const token = await user.getIdToken();
       
-      // Call API to update custom claims (remove mustChangePassword flag)
-      const response = await fetch('/api/auth/update-claims', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          mustChangePassword: false
-        })
+      const response = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to update user claims');
-      }
-
-      setSuccess(true);
-
-      // Redirect after 3 seconds
-      setTimeout(() => {
-        router.push('/dashboards/drivers');
-      }, 3000);
-
-    } catch (error: any) {
-      console.error('Password change error:', error);
       
-      // Handle specific Firebase errors
-      if (error.code === 'auth/weak-password') {
-        setError('Password is too weak. Please choose a stronger password.');
-      } else if (error.code === 'auth/requires-recent-login') {
-        setError('Please log in again to change your password.');
-        setTimeout(() => {
-          router.push('/auth/login');
-        }, 2000);
+      if (!response.ok) throw new Error('Failed to get user data');
+      
+      const userData = await response.json();
+      
+      if (userData.role !== 'admin' && userData.role !== 'fleet_manager') {
+        throw new Error('Access denied. Admin access only.');
+      }
+      
+      router.push(redirect);
+      
+    } catch (error: any) {
+      console.error('Login error:', error);
+      
+      if (error.code === 'auth/user-not-found') {
+        setError('No account found with this email address.');
+      } else if (error.code === 'auth/wrong-password') {
+        setError('Incorrect password. Please try again.');
       } else {
-        setError(error.message || 'Failed to change password');
+        setError(error.message || 'Failed to sign in');
       }
     } finally {
       setLoading(false);
     }
   };
 
-  // Show loading while Firebase initializes
   if (!firebaseReady) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-400">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (success) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-slate-800/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl p-8 text-center">
-          <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <CheckCircle className="w-10 h-10 text-green-400" />
-          </div>
-          <h2 className="text-2xl font-bold text-white mb-2">Password Changed!</h2>
-          <p className="text-gray-400 mb-6">
-            Your password has been successfully updated. Redirecting to dashboard...
-          </p>
-          <div className="w-8 h-8 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto"></div>
         </div>
       </div>
     );
@@ -174,14 +109,8 @@ function ChangePasswordForm() {
           <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-2xl mb-4">
             <Shield className="w-10 h-10 text-black" />
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">
-            {isFirstLogin ? 'Set Your Password' : 'Change Password'}
-          </h1>
-          <p className="text-gray-400">
-            {isFirstLogin 
-              ? 'Create a strong password for your account' 
-              : 'Update your account password'}
-          </p>
+          <h1 className="text-3xl font-bold text-white mb-2">Admin Login</h1>
+          <p className="text-gray-400">Sign in to access the fleet management system</p>
         </div>
 
         <div className="bg-slate-800/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl p-8">
@@ -194,67 +123,54 @@ function ChangePasswordForm() {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                New Password
-              </label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Email Address</label>
               <div className="relative">
-                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
                 <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
-                  placeholder="Enter new password"
+                  placeholder="admin@example.com"
                   required
                 />
-              </div>
-
-              {/* Password Requirements */}
-              <div className="mt-3 space-y-2">
-                {passwordRequirements.map((req, index) => (
-                  <div key={index} className="flex items-center gap-2 text-xs">
-                    {req.met ? (
-                      <CheckCircle className="w-3 h-3 text-green-400" />
-                    ) : (
-                      <div className="w-3 h-3 rounded-full border border-gray-600" />
-                    )}
-                    <span className={req.met ? 'text-green-400' : 'text-gray-500'}>
-                      {req.message}
-                    </span>
-                  </div>
-                ))}
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Confirm New Password
-              </label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Password</label>
               <div className="relative">
-                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
                 <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
-                  placeholder="Confirm new password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-12 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                  placeholder="Enter your password"
                   required
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
 
             <button
               type="submit"
-              disabled={loading || !isPasswordValid}
+              disabled={loading}
               className="w-full bg-gradient-to-r from-yellow-400 to-amber-500 text-black font-semibold py-3 rounded-xl hover:from-yellow-300 hover:to-amber-400 transition-all shadow-lg shadow-yellow-500/30 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  Updating...
+                  Signing in...
                 </>
               ) : (
-                isFirstLogin ? 'Set Password' : 'Change Password'
+                'Sign In'
               )}
             </button>
           </form>
@@ -264,8 +180,7 @@ function ChangePasswordForm() {
   );
 }
 
-// Loading fallback for Suspense
-function ChangePasswordFallback() {
+function AdminLoginFallback() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
       <div className="text-center">
@@ -276,11 +191,10 @@ function ChangePasswordFallback() {
   );
 }
 
-// Main page component with Suspense boundary
-export default function ChangePasswordPage() {
+export default function AdminLoginPage() {
   return (
-    <Suspense fallback={<ChangePasswordFallback />}>
-      <ChangePasswordForm />
+    <Suspense fallback={<AdminLoginFallback />}>
+      <AdminLoginForm />
     </Suspense>
   );
 }
