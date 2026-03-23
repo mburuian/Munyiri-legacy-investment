@@ -1,11 +1,11 @@
 // app/auth/change-password/page.tsx
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { auth } from '..//../..//lib/firebase/config';
 import { updatePassword } from 'firebase/auth';
 import { Key, Loader2, AlertCircle, CheckCircle, Shield } from 'lucide-react';
+import { auth } from '../../../lib/firebase/config';
 
 export default function ChangePasswordPage() {
   const router = useRouter();
@@ -17,6 +17,12 @@ export default function ChangePasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [isClient, setIsClient] = useState(false);
+
+  // Ensure we're on client side
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   const validatePassword = (password: string) => {
     const requirements = [
@@ -40,6 +46,11 @@ export default function ChangePasswordPage() {
     e.preventDefault();
     setError('');
 
+    if (!isClient) {
+      setError('Please wait for page to load');
+      return;
+    }
+
     if (newPassword !== confirmPassword) {
       setError('Passwords do not match');
       return;
@@ -53,7 +64,7 @@ export default function ChangePasswordPage() {
     setLoading(true);
 
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -63,11 +74,10 @@ export default function ChangePasswordPage() {
       await updatePassword(user, newPassword);
 
       // Get ID token to update claims
-      const idTokenResult = await user.getIdTokenResult();
+      const token = await user.getIdToken();
       
       // Call API to update custom claims (remove mustChangePassword flag)
-      const token = await user.getIdToken();
-      await fetch('/api/auth/update-claims', {
+      const response = await fetch('/api/auth/update-claims', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -78,6 +88,10 @@ export default function ChangePasswordPage() {
         })
       });
 
+      if (!response.ok) {
+        throw new Error('Failed to update user claims');
+      }
+
       setSuccess(true);
 
       // Redirect after 3 seconds
@@ -87,11 +101,34 @@ export default function ChangePasswordPage() {
 
     } catch (error: any) {
       console.error('Password change error:', error);
-      setError(error.message || 'Failed to change password');
+      
+      // Handle specific Firebase errors
+      if (error.code === 'auth/weak-password') {
+        setError('Password is too weak. Please choose a stronger password.');
+      } else if (error.code === 'auth/requires-recent-login') {
+        setError('Please log in again to change your password.');
+        setTimeout(() => {
+          router.push('/auth/login');
+        }, 2000);
+      } else {
+        setError(error.message || 'Failed to change password');
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  // Show loading while checking client-side
+  if (!isClient) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (success) {
     return (
