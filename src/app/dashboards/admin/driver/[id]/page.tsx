@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as React from 'react';
@@ -33,7 +33,10 @@ import {
   Activity,
   Loader2
 } from "lucide-react";
-import { auth } from '../../../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 // Updated types to match API response
 interface DriverDetailsResponse {
@@ -85,22 +88,44 @@ interface DriverDetailsResponse {
   performance: Array<any>;
 }
 
-export default function DriverDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = React.use(params);
+function DriverDetailContent({ id }: { id: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [driverData, setDriverData] = useState<DriverDetailsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [firebaseReady, setFirebaseReady] = useState(false);
+
+  // Load Firebase dynamically on client side only
+  useEffect(() => {
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
+  }, []);
 
   useEffect(() => {
+    if (!firebaseReady) return;
+    
     if (!id) {
       setError('Invalid driver ID');
       setLoading(false);
       return;
     }
 
-    const unsubscribe = auth.onAuthStateChanged((user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
       if (!user) {
         router.push('/auth/login');
         return;
@@ -109,14 +134,14 @@ export default function DriverDetailPage({ params }: { params: Promise<{ id: str
     });
 
     return () => unsubscribe();
-  }, [id]);
+  }, [id, firebaseReady]);
 
   const loadDriver = async () => {
     setLoading(true);
     setError(null);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -162,7 +187,7 @@ export default function DriverDetailPage({ params }: { params: Promise<{ id: str
     
     setDeleteLoading(true);
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       const token = await user?.getIdToken();
       
       const response = await fetch(`/api/admin/drivers/${id}`, {
@@ -174,7 +199,7 @@ export default function DriverDetailPage({ params }: { params: Promise<{ id: str
       
       if (!response.ok) throw new Error('Failed to delete driver');
       
-      router.push('/dashboards/admin/driver');
+      router.push('/dashboards/admin/drivers');
     } catch (error) {
       console.error('Error deleting driver:', error);
       alert('Failed to delete driver');
@@ -229,6 +254,18 @@ export default function DriverDetailPage({ params }: { params: Promise<{ id: str
     });
   };
 
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
@@ -253,7 +290,7 @@ export default function DriverDetailPage({ params }: { params: Promise<{ id: str
           <h2 className="text-2xl font-bold text-white mb-4">Driver Not Found</h2>
           <p className="text-gray-400 mb-6">{error || 'The driver you are looking for does not exist'}</p>
           <Link
-            href="/dashboards/admin/driver"
+            href="/dashboards/admin/drivers"
             className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-yellow-400 to-amber-500 text-black rounded-xl font-semibold hover:from-yellow-300 hover:to-amber-400 transition shadow-lg shadow-yellow-500/30"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -281,7 +318,7 @@ export default function DriverDetailPage({ params }: { params: Promise<{ id: str
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Link
-                href="/dashboards/admin/driver"
+                href="/dashboards/admin/drivers"
                 className="p-2 hover:bg-slate-800 rounded-xl transition border border-yellow-500/20"
               >
                 <ArrowLeft className="w-5 h-5" />
@@ -299,7 +336,7 @@ export default function DriverDetailPage({ params }: { params: Promise<{ id: str
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => router.push(`/dashboards/admin/driver/${id}/edit`)}
+                onClick={() => router.push(`/dashboards/admin/drivers/${id}/edit`)}
                 className="px-4 py-2 bg-yellow-500/20 text-yellow-400 rounded-xl hover:bg-yellow-500/30 transition flex items-center gap-2 border border-yellow-500/30"
               >
                 <Edit className="w-4 h-4" />
@@ -502,7 +539,7 @@ export default function DriverDetailPage({ params }: { params: Promise<{ id: str
                   Recent Trips
                 </h3>
                 <Link 
-                  href={`/dashboards/admin/driver/${id}/trips`}
+                  href={`/dashboards/admin/drivers/${id}/trips`}
                   className="text-sm text-yellow-400 hover:text-yellow-300"
                 >
                   View All
@@ -577,5 +614,26 @@ export default function DriverDetailPage({ params }: { params: Promise<{ id: str
         }
       `}</style>
     </div>
+  );
+}
+
+function DriverDetailFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function DriverDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = React.use(params);
+  
+  return (
+    <Suspense fallback={<DriverDetailFallback />}>
+      <DriverDetailContent id={id} />
+    </Suspense>
   );
 }

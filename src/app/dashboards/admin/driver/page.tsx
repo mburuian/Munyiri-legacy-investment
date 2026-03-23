@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -35,7 +35,10 @@ import {
   MoreHorizontal,
   Activity
 } from "lucide-react";
-import { auth } from '../../../../lib/firebase/config';
+
+// Firebase will be dynamically imported on client side only
+let auth: any = null;
+let onAuthStateChanged: any = null;
 
 interface Driver {
   id: string;
@@ -48,12 +51,10 @@ interface Driver {
   status: string;
   createdAt: string;
   
-  // Performance metrics (from latest metrics)
   rating?: number | null;
   tripsCompleted?: number;
   totalRevenue?: number;
   
-  // Assigned vehicle
   assignedVehicle?: {
     id: string;
     plateNumber: string;
@@ -83,7 +84,7 @@ interface DriversResponse {
   };
 }
 
-export default function DriversPage() {
+function DriversContent() {
   const router = useRouter();
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [filteredDrivers, setFilteredDrivers] = useState<Driver[]>([]);
@@ -95,6 +96,7 @@ export default function DriversPage() {
   const [driverToDelete, setDriverToDelete] = useState<Driver | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [firebaseReady, setFirebaseReady] = useState(false);
   
   // Search and filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -107,9 +109,31 @@ export default function DriversPage() {
   const [pagination, setPagination] = useState<DriversResponse['pagination'] | null>(null);
   const itemsPerPage = 12;
 
+  // Load Firebase dynamically on client side only
   useEffect(() => {
+    const loadFirebase = async () => {
+      try {
+        const firebaseModule = await import('../../../../lib/firebase/client');
+        const authModule = await import('firebase/auth');
+        
+        auth = firebaseModule.auth;
+        onAuthStateChanged = authModule.onAuthStateChanged;
+        setFirebaseReady(true);
+      } catch (error) {
+        console.error('Failed to load Firebase:', error);
+        setError('Failed to initialize authentication');
+        setFirebaseReady(true);
+      }
+    };
+    
+    loadFirebase();
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseReady) return;
+    
     // Check authentication
-    const unsubscribe = auth.onAuthStateChanged((user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user: any) => {
       if (!user) {
         router.push('/auth/login');
         return;
@@ -118,12 +142,11 @@ export default function DriversPage() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [firebaseReady, router]);
 
   useEffect(() => {
     if (!drivers.length) return;
     
-    // Apply filters
     let filtered = drivers.filter(driver => {
       const matchesSearch = 
         driver.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -136,7 +159,6 @@ export default function DriversPage() {
       return matchesSearch && matchesStatus;
     });
 
-    // Apply sorting
     if (sortBy === 'name') {
       filtered = filtered.sort((a, b) => a.name.localeCompare(b.name));
     } else if (sortBy === 'status') {
@@ -156,7 +178,7 @@ export default function DriversPage() {
     setError(null);
     
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (!user) {
         router.push('/auth/login');
         return;
@@ -184,7 +206,6 @@ export default function DriversPage() {
     }
   };
 
-  // Navigate to driver detail page
   const handleViewDetails = (driver: Driver) => {
     router.push(`/dashboards/admin/driver/${driver.id}`);
   };
@@ -205,7 +226,7 @@ export default function DriversPage() {
     
     setDeleteLoading(true);
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       const token = await user?.getIdToken();
       
       const response = await fetch(`/api/admin/drivers/${driverToDelete.id}`, {
@@ -262,12 +283,23 @@ export default function DriversPage() {
     }
   };
 
-  // Pagination
   const totalPages = Math.ceil(filteredDrivers.length / itemsPerPage);
   const paginatedDrivers = filteredDrivers.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
+
+  // Show loading while Firebase initializes
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -469,78 +501,68 @@ export default function DriversPage() {
         ) : viewMode === 'grid' ? (
           // Grid View
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {paginatedDrivers.map((driver) => {
-              const statusIcon = getStatusIcon(driver.status);
-              
-              return (
-                <div
-                  key={driver.id}
-                  onClick={() => handleViewDetails(driver)}
-                  className="group bg-slate-800/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/50 hover:shadow-xl hover:shadow-yellow-500/10 transition-all cursor-pointer"
-                >
-                  {/* Driver Avatar */}
-                  <div className="relative h-32 bg-gradient-to-br from-yellow-500/20 to-amber-600/20 flex items-center justify-center">
-                    {driver.avatar ? (
-                      <Image
-                        src={driver.avatar}
-                        alt={driver.name}
-                        fill
-                        className="object-cover"
-                      />
-                    ) : (
-                      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center">
-                        <User className="w-10 h-10 text-black" />
-                      </div>
-                    )}
-                    
-                    {/* Status Badge */}
-                    <div className="absolute top-3 right-3">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(driver.status)}`}>
-                        {driver.status?.replace('-', ' ').toUpperCase()}
-                      </span>
+            {paginatedDrivers.map((driver) => (
+              <div
+                key={driver.id}
+                onClick={() => handleViewDetails(driver)}
+                className="group bg-slate-800/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/50 hover:shadow-xl hover:shadow-yellow-500/10 transition-all cursor-pointer"
+              >
+                <div className="relative h-32 bg-gradient-to-br from-yellow-500/20 to-amber-600/20 flex items-center justify-center">
+                  {driver.avatar ? (
+                    <Image
+                      src={driver.avatar}
+                      alt={driver.name}
+                      fill
+                      className="object-cover"
+                    />
+                  ) : (
+                    <div className="w-20 h-20 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center">
+                      <User className="w-10 h-10 text-black" />
                     </div>
-                  </div>
-
-                  {/* Driver Info */}
-                  <div className="p-4">
-                    <h3 className="text-lg font-semibold text-white mb-1">{driver.name}</h3>
-                    <p className="text-sm text-gray-400 mb-3">{driver.email}</p>
-                    
-                    {/* License */}
-                    <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
-                      <IdCard className="w-4 h-4" />
-                      <span>{driver.licenseNumber}</span>
-                    </div>
-
-                    {/* Quick Stats */}
-                    <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-yellow-500/10">
-                      <div className="text-center">
-                        <p className="text-xs text-gray-500">Trips</p>
-                        <p className="text-sm font-medium text-white">{driver.tripsCompleted || 0}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-xs text-gray-500">Revenue</p>
-                        <p className="text-sm font-medium text-green-400">
-                          KES {driver.totalRevenue?.toLocaleString() || '0'}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Vehicle Info */}
-                    {driver.assignedVehicle ? (
-                      <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
-                        <Truck className="w-3 h-3" />
-                        <span>{driver.assignedVehicle.plateNumber} - {driver.assignedVehicle.model}</span>
-                      </div>
-                    ) : (
-                      <div className="mt-3 text-xs text-gray-600">
-                        No vehicle assigned
-                      </div>
-                    )}
+                  )}
+                  
+                  <div className="absolute top-3 right-3">
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(driver.status)}`}>
+                      {driver.status?.replace('-', ' ').toUpperCase()}
+                    </span>
                   </div>
                 </div>
-              );
-            })}
+
+                <div className="p-4">
+                  <h3 className="text-lg font-semibold text-white mb-1">{driver.name}</h3>
+                  <p className="text-sm text-gray-400 mb-3">{driver.email}</p>
+                  
+                  <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
+                    <IdCard className="w-4 h-4" />
+                    <span>{driver.licenseNumber}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-yellow-500/10">
+                    <div className="text-center">
+                      <p className="text-xs text-gray-500">Trips</p>
+                      <p className="text-sm font-medium text-white">{driver.tripsCompleted || 0}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs text-gray-500">Revenue</p>
+                      <p className="text-sm font-medium text-green-400">
+                        KES {driver.totalRevenue?.toLocaleString() || '0'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {driver.assignedVehicle ? (
+                    <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
+                      <Truck className="w-3 h-3" />
+                      <span>{driver.assignedVehicle.plateNumber} - {driver.assignedVehicle.model}</span>
+                    </div>
+                  ) : (
+                    <div className="mt-3 text-xs text-gray-600">
+                      No vehicle assigned
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           // List View
@@ -557,97 +579,91 @@ export default function DriversPage() {
                     <th className="text-left py-4 px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Revenue</th>
                     <th className="text-left py-4 px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Vehicle</th>
                     <th className="text-center py-4 px-6 text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
-                  </tr>
+                   </tr>
                 </thead>
                 <tbody className="divide-y divide-yellow-500/10">
-                  {paginatedDrivers.map((driver) => {
-                    const statusIcon = getStatusIcon(driver.status);
-                    
-                    return (
-                      <tr 
-                        key={driver.id} 
-                        onClick={() => handleViewDetails(driver)}
-                        className="hover:bg-yellow-500/5 transition-colors cursor-pointer"
-                      >
-                        <td className="py-4 px-6">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center flex-shrink-0">
-                              <User className="w-5 h-5 text-black" />
-                            </div>
-                            <div>
-                              <p className="font-medium text-white">{driver.name}</p>
-                              <p className="text-xs text-gray-500">{driver.email}</p>
-                            </div>
+                  {paginatedDrivers.map((driver) => (
+                    <tr 
+                      key={driver.id} 
+                      onClick={() => handleViewDetails(driver)}
+                      className="hover:bg-yellow-500/5 transition-colors cursor-pointer"
+                    >
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center flex-shrink-0">
+                            <User className="w-5 h-5 text-black" />
                           </div>
-                        </td>
-                        <td className="py-4 px-6">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2 text-sm">
-                              <Phone className="w-3 h-3 text-gray-500" />
-                              <span className="text-gray-300">{driver.phone}</span>
-                            </div>
+                          <div>
+                            <p className="font-medium text-white">{driver.name}</p>
+                            <p className="text-xs text-gray-500">{driver.email}</p>
                           </div>
-                        </td>
-                        <td className="py-4 px-6">
+                        </div>
+                      </td>
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-2 text-sm">
+                          <Phone className="w-3 h-3 text-gray-500" />
+                          <span className="text-gray-300">{driver.phone}</span>
+                        </div>
+                      </td>
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-2">
+                          <IdCard className="w-4 h-4 text-gray-500" />
+                          <span className="text-sm text-gray-300">{driver.licenseNumber}</span>
+                        </div>
+                      </td>
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-sm ${getStatusColor(driver.status).split(' ')[1]}`}>
+                            {getStatusIcon(driver.status)}
+                          </span>
+                          <span className={`text-sm ${getStatusColor(driver.status).split(' ')[1]}`}>
+                            {driver.status?.replace('-', ' ').toUpperCase()}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-4 px-6">
+                        <span className="text-sm text-gray-300">{driver.tripsCompleted || 0}</span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <span className="text-sm text-green-400">KES {driver.totalRevenue?.toLocaleString() || '0'}</span>
+                      </td>
+                      <td className="py-4 px-6">
+                        {driver.assignedVehicle ? (
                           <div className="flex items-center gap-2">
-                            <IdCard className="w-4 h-4 text-gray-500" />
-                            <span className="text-sm text-gray-300">{driver.licenseNumber}</span>
+                            <Truck className="w-4 h-4 text-gray-500" />
+                            <span className="text-sm text-gray-300">{driver.assignedVehicle.plateNumber}</span>
                           </div>
-                        </td>
-                        <td className="py-4 px-6">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-sm ${getStatusColor(driver.status).split(' ')[1]}`}>
-                              {statusIcon}
-                            </span>
-                            <span className={`text-sm ${getStatusColor(driver.status).split(' ')[1]}`}>
-                              {driver.status?.replace('-', ' ').toUpperCase()}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="py-4 px-6">
-                          <span className="text-sm text-gray-300">{driver.tripsCompleted || 0}</span>
-                        </td>
-                        <td className="py-4 px-6">
-                          <span className="text-sm text-green-400">KES {driver.totalRevenue?.toLocaleString() || '0'}</span>
-                        </td>
-                        <td className="py-4 px-6">
-                          {driver.assignedVehicle ? (
-                            <div className="flex items-center gap-2">
-                              <Truck className="w-4 h-4 text-gray-500" />
-                              <span className="text-sm text-gray-300">{driver.assignedVehicle.plateNumber}</span>
-                            </div>
-                          ) : (
-                            <span className="text-sm text-gray-600">Unassigned</span>
-                          )}
-                        </td>
-                        <td className="py-4 px-6">
-                          <div className="flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleViewDetails(driver);
-                              }}
-                              className="p-1.5 hover:bg-slate-700 rounded-lg transition"
-                            >
-                              <Eye className="w-4 h-4 text-gray-400" />
-                            </button>
-                            <button
-                              onClick={(e) => handleEdit(driver.id, e)}
-                              className="p-1.5 hover:bg-slate-700 rounded-lg transition"
-                            >
-                              <Edit className="w-4 h-4 text-gray-400" />
-                            </button>
-                            <button
-                              onClick={(e) => handleDeleteClick(driver, e)}
-                              className="p-1.5 hover:bg-slate-700 rounded-lg transition"
-                            >
-                              <Trash2 className="w-4 h-4 text-gray-400" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        ) : (
+                          <span className="text-sm text-gray-600">Unassigned</span>
+                        )}
+                      </td>
+                      <td className="py-4 px-6">
+                        <div className="flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewDetails(driver);
+                            }}
+                            className="p-1.5 hover:bg-slate-700 rounded-lg transition"
+                          >
+                            <Eye className="w-4 h-4 text-gray-400" />
+                          </button>
+                          <button
+                            onClick={(e) => handleEdit(driver.id, e)}
+                            className="p-1.5 hover:bg-slate-700 rounded-lg transition"
+                          >
+                            <Edit className="w-4 h-4 text-gray-400" />
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteClick(driver, e)}
+                            className="p-1.5 hover:bg-slate-700 rounded-lg transition"
+                          >
+                            <Trash2 className="w-4 h-4 text-gray-400" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -749,5 +765,24 @@ export default function DriversPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+function DriversFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function DriversPage() {
+  return (
+    <Suspense fallback={<DriversFallback />}>
+      <DriversContent />
+    </Suspense>
   );
 }
