@@ -3,13 +3,10 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
 import { 
   ArrowLeft,
   Radio,
-  Smartphone,
   MapPin,
-  Navigation,
   Activity,
   CheckCircle,
   XCircle,
@@ -67,7 +64,6 @@ import {
   Usb,
   HardDrive,
   Cpu,
-  Memory,
   Server,
   Network,
   Lock,
@@ -96,8 +92,6 @@ import {
   TabletSmartphone,
   Wifi as WifiIcon,
   Bluetooth as BluetoothIcon,
-  Ethernet,
-  Usb as UsbIcon,
   Plug,
   Power,
   BatteryCharging,
@@ -128,8 +122,6 @@ import {
   Ship,
   Package,
   Box,
-  Crate,
-  Pallet,
   Warehouse,
   Factory,
   Building,
@@ -138,58 +130,16 @@ import {
   School,
   University,
   Church,
-  Mosque,
-  Temple,
-  Park,
-  Stadium,
-  Mall,
   Store,
-  Restaurant,
-  Cafe,
-  Bar,
   Hotel,
-  Airport,
-  Port,
-  Station,
-  Bridge,
-  Tunnel,
-  Road,
-  Highway,
-  Street,
-  Alley,
-  Path,
-  Trail,
-  Forest,
-  Mountain,
-  Beach,
-  Lake,
-  River,
-  Ocean,
-  Desert,
-  Field,
-  Farm,
-  Garden,
-  Zoo,
-  Museum,
-  Gallery,
-  Theater,
-  Cinema,
   Library,
   Book,
   Newspaper,
-  Magazine,
   Podcast,
-  Broadcast,
   Satellite as SatelliteIcon,
   Antenna,
   Radar,
-  Sonar,
-  Lidar,
-  Gps,
-  Glonass,
-  Galileo,
-  Beidou,
-  Compass as CompassIcon2
+  X // Add X for close buttons
 } from 'lucide-react';
 
 // Firebase imports
@@ -241,7 +191,6 @@ function IntegrationsContent() {
   const [expandedIntegration, setExpandedIntegration] = useState<string | null>(null);
   const [showPaybillModal, setShowPaybillModal] = useState(false);
   const [showGPSModal, setShowGPSModal] = useState(false);
-  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   
   // Paybill config state
@@ -355,6 +304,23 @@ function IntegrationsContent() {
       pricing: 'From $10/month',
       docs: 'https://developers.facebook.com/docs/whatsapp'
     },
+    {
+      id: 'google-analytics',
+      name: 'Google Analytics',
+      description: 'Track user behavior, conversion rates, and business insights.',
+      icon: BarChart3,
+      status: 'disconnected',
+      category: 'analytics',
+      features: [
+        'User behavior tracking',
+        'Conversion funnel analysis',
+        'Custom dashboards',
+        'Real-time analytics',
+        'Goal tracking'
+      ],
+      pricing: 'Free',
+      docs: 'https://analytics.google.com/docs'
+    }
   ];
 
   // Load Firebase
@@ -445,10 +411,7 @@ function IntegrationsContent() {
       setShowPaybillModal(true);
     } else if (integrationId === 'gps-tracking') {
       setShowGPSModal(true);
-    } else if (integrationId === 'google-analytics') {
-      setShowAnalyticsModal(true);
     } else {
-      // For other integrations, show a toast or redirect
       alert(`Connect to ${integrationId} - Configuration coming soon!`);
     }
   };
