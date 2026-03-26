@@ -30,18 +30,14 @@ import {
   CalendarDays,
   IdCard,
   Info,
-  HelpCircle,
   Check,
   AlertTriangle,
   Image as ImageIcon,
-  File,
   Trash2,
+  Save,
   Eye,
-  Download,
-  Maximize2,
-  Minimize2,
+  ChevronRight,
   ChevronLeft,
-  ChevronRight
 } from "lucide-react";
 
 // Firebase will be dynamically imported on client side only
@@ -101,40 +97,33 @@ interface FormData {
 
 // Section progress tracking
 const sections = [
-  { id: 'basic', name: 'Basic Info', icon: Car },
-  { id: 'insurance', name: 'Insurance', icon: Shield },
-  { id: 'license', name: 'License', icon: IdCard },
-  { id: 'service', name: 'Service', icon: Wrench },
-  { id: 'fuel', name: 'Fuel & Tech', icon: Fuel },
-  { id: 'financial', name: 'Financial', icon: CreditCard },
-  { id: 'images', name: 'Images', icon: Camera },
+  { id: 'basic', name: 'Basic Info', icon: Car, description: 'Vehicle identification details' },
+  { id: 'insurance', name: 'Insurance', icon: Shield, description: 'Insurance coverage information' },
+  { id: 'service', name: 'Service', icon: Wrench, description: 'Maintenance schedule' },
+  { id: 'specs', name: 'Specifications', icon: Gauge, description: 'Technical specifications' },
+  { id: 'financial', name: 'Financial', icon: CreditCard, description: 'Financial targets & costs' },
+  { id: 'images', name: 'Images', icon: Camera, description: 'Vehicle photos' },
 ];
 
 function AddVehicleContent() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [activeSection, setActiveSection] = useState('basic');
   const [completedSections, setCompletedSections] = useState<Set<string>>(new Set());
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [firebaseReady, setFirebaseReady] = useState(false);
+  const [formProgress, setFormProgress] = useState(0);
+  const [user, setUser] = useState<any>(null);
+  const [createdVehicleId, setCreatedVehicleId] = useState<string | null>(null);
   
-  // Images state
-  const [mainImage, setMainImage] = useState<File | null>(null);
+  // Images state - store files before upload
+  const [mainImageFile, setMainImageFile] = useState<File | null>(null);
   const [mainImagePreview, setMainImagePreview] = useState<string | null>(null);
-  const [additionalImages, setAdditionalImages] = useState<File[]>([]);
-  const [additionalPreviews, setAdditionalPreviews] = useState<string[]>([]);
-  
-  // Documents state
-  const [logbookFile, setLogbookFile] = useState<File | null>(null);
-  const [logbookPreview, setLogbookPreview] = useState<string | null>(null);
-  const [insuranceDoc, setInsuranceDoc] = useState<File | null>(null);
-  const [insurancePreview, setInsurancePreview] = useState<string | null>(null);
-  const [licenseDoc, setLicenseDoc] = useState<File | null>(null);
-  const [licensePreview, setLicensePreview] = useState<string | null>(null);
+  const [additionalImageFiles, setAdditionalImageFiles] = useState<File[]>([]);
+  const [additionalImagePreviews, setAdditionalImagePreviews] = useState<string[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadingImages, setUploadingImages] = useState(false);
   
   const [formData, setFormData] = useState<FormData>({
     regNumber: '',
@@ -208,6 +197,7 @@ function AddVehicleContent() {
         router.push('/auth/login');
         return;
       }
+      setUser(user);
     });
 
     return () => unsubscribe();
@@ -233,30 +223,53 @@ function AddVehicleContent() {
     }
   }, [formData.lastServiceDate, formData.lastServiceOdometer, formData.serviceIntervalKm, formData.serviceIntervalMonths]);
 
-  // Mark section as completed when fields are filled
+  // Calculate form progress
   useEffect(() => {
+    let completed = 0;
+    let total = 0;
+    
+    sections.forEach(section => {
+      total++;
+      if (section.id === 'basic' && formData.regNumber && formData.make && formData.model) {
+        completed++;
+      } else if (section.id === 'insurance' && formData.insuranceExpiry) {
+        completed++;
+      } else if (section.id === 'images' && mainImageFile) {
+        completed++;
+      } else if (section.id === 'service' && (formData.lastServiceDate || formData.currentOdometer)) {
+        completed++;
+      } else if (section.id === 'specs' && (formData.fuelType || formData.transmission)) {
+        completed++;
+      } else if (section.id === 'financial' && (formData.purchasePrice || formData.dailyTarget)) {
+        completed++;
+      }
+    });
+    
+    setFormProgress((completed / total) * 100);
+    
+    // Mark sections as completed
     const newCompleted = new Set(completedSections);
-    
-    // Basic Info
-    if (formData.regNumber && formData.make && formData.model && formData.year) {
-      newCompleted.add('basic');
-    }
-    
-    // Insurance
-    if (formData.insuranceExpiry) {
-      newCompleted.add('insurance');
-    }
-    
-    // Images
-    if (mainImage) {
-      newCompleted.add('images');
-    }
-    
+    if (formData.regNumber && formData.make && formData.model) newCompleted.add('basic');
+    if (formData.insuranceExpiry) newCompleted.add('insurance');
+    if (mainImageFile) newCompleted.add('images');
+    if (formData.lastServiceDate || formData.currentOdometer) newCompleted.add('service');
+    if (formData.fuelType || formData.transmission) newCompleted.add('specs');
+    if (formData.purchasePrice || formData.dailyTarget) newCompleted.add('financial');
     setCompletedSections(newCompleted);
-  }, [formData, mainImage]);
+  }, [formData, mainImageFile]);
 
-  // Handle image upload
-  const handleMainImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Convert file to base64 for preview
+  const fileToPreview = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
+  };
+
+  // Handle main image upload
+  const handleMainImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
@@ -269,75 +282,84 @@ function AddVehicleContent() {
         return;
       }
       
-      setMainImage(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setMainImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const preview = await fileToPreview(file);
+        setMainImageFile(file);
+        setMainImagePreview(preview);
+      } catch (err) {
+        setError('Failed to process image');
+      }
     }
   };
 
-  const handleAdditionalImagesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle additional images
+  const handleAdditionalImagesChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     
-    if (additionalImages.length + files.length > 10) {
+    if (additionalImageFiles.length + files.length > 10) {
       setError('Maximum 10 additional images allowed');
       return;
     }
     
-    const validFiles = files.filter(file => {
+    for (const file of files) {
       if (file.size > 5 * 1024 * 1024) {
         setError('Each image should be less than 5MB');
-        return false;
+        return;
       }
       if (!file.type.startsWith('image/')) {
         setError('Please upload only image files');
-        return false;
+        return;
       }
-      return true;
-    });
+    }
     
-    setAdditionalImages(prev => [...prev, ...validFiles]);
+    try {
+      const previews = await Promise.all(files.map(fileToPreview));
+      setAdditionalImageFiles(prev => [...prev, ...files]);
+      setAdditionalImagePreviews(prev => [...prev, ...previews]);
+    } catch (err) {
+      setError('Failed to process images');
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
     
-    validFiles.forEach(file => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setAdditionalPreviews(prev => [...prev, reader.result as string]);
-      };
-      reader.readAsDataURL(file);
-    });
+    const files = Array.from(e.dataTransfer.files);
+    const imageFiles = files.filter(file => file.type.startsWith('image/'));
+    
+    if (imageFiles.length === 0) {
+      setError('Please drop image files only');
+      return;
+    }
+    
+    if (additionalImageFiles.length + imageFiles.length > 10) {
+      setError('Maximum 10 additional images allowed');
+      return;
+    }
+    
+    try {
+      const previews = await Promise.all(imageFiles.map(fileToPreview));
+      setAdditionalImageFiles(prev => [...prev, ...imageFiles]);
+      setAdditionalImagePreviews(prev => [...prev, ...previews]);
+    } catch (err) {
+      setError('Failed to process images');
+    }
   };
 
   const removeAdditionalImage = (index: number) => {
-    setAdditionalImages(prev => prev.filter((_, i) => i !== index));
-    setAdditionalPreviews(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleDocumentUpload = (
-    e: React.ChangeEvent<HTMLInputElement>,
-    setter: React.Dispatch<React.SetStateAction<File | null>>,
-    setPreview: React.Dispatch<React.SetStateAction<string | null>>
-  ) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 10 * 1024 * 1024) {
-        setError('Document size should be less than 10MB');
-        return;
-      }
-      
-      setter(file);
-      
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setPreview(reader.result as string);
-        };
-        reader.readAsDataURL(file);
-      } else {
-        setPreview(file.name);
-      }
-    }
+    setAdditionalImageFiles(prev => prev.filter((_, i) => i !== index));
+    setAdditionalImagePreviews(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -354,43 +376,58 @@ function AddVehicleContent() {
     if (!formData.regNumber.trim()) {
       setError('Registration number is required');
       setActiveSection('basic');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return false;
     }
     if (!formData.make.trim()) {
       setError('Make is required');
       setActiveSection('basic');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return false;
     }
     if (!formData.model.trim()) {
       setError('Model is required');
       setActiveSection('basic');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return false;
     }
     if (!formData.insuranceExpiry) {
       setError('Insurance expiry date is required');
       setActiveSection('insurance');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return false;
+    }
+    if (!mainImageFile) {
+      setError('Main vehicle image is required');
+      setActiveSection('images');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return false;
     }
     return true;
   };
 
-  const uploadFileToDatabase = async (file: File, type: string): Promise<string> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('type', type);
+  const uploadImageToAPI = async (file: File, vehicleId: string, imageType: 'main' | 'gallery'): Promise<any> => {
+    const token = await user.getIdToken();
+    const formDataUpload = new FormData();
+    formDataUpload.append('file', file);
+    formDataUpload.append('imageType', imageType);
+    formDataUpload.append('entityType', 'vehicle');
+    formDataUpload.append('entityId', vehicleId);
 
     const response = await fetch('/api/upload', {
       method: 'POST',
-      body: formData,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formDataUpload,
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to upload file');
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to upload image');
     }
 
-    const data = await response.json();
-    return data.dataUrl;
+    return response.json();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -398,49 +435,21 @@ function AddVehicleContent() {
     setError(null);
     
     if (!validateForm()) return;
+    
+    if (!user) {
+      setError('You must be logged in to add a vehicle');
+      return;
+    }
 
     setLoading(true);
-    setUploading(true);
 
     try {
-      // Upload main image to get Base64
-      let mainImageDataUrl = null;
-      if (mainImage) {
-        mainImageDataUrl = await uploadFileToDatabase(mainImage, 'main');
-      }
-
-      // Upload additional images
-      const additionalImageDataUrls = [];
-      for (const image of additionalImages) {
-        const dataUrl = await uploadFileToDatabase(image, 'gallery');
-        additionalImageDataUrls.push(dataUrl);
-      }
-
-      // Upload documents
-      let logbookDataUrl = null;
-      if (logbookFile) {
-        logbookDataUrl = await uploadFileToDatabase(logbookFile, 'document');
-      }
-
-      let insuranceDataUrl = null;
-      if (insuranceDoc) {
-        insuranceDataUrl = await uploadFileToDatabase(insuranceDoc, 'document');
-      }
-
-      let licenseDataUrl = null;
-      if (licenseDoc) {
-        licenseDataUrl = await uploadFileToDatabase(licenseDoc, 'document');
-      }
-
-      // Prepare vehicle data with Base64 images
+      const token = await user.getIdToken();
+      
+      // First, create the vehicle without images
       const vehicleData = {
         ...formData,
         regNumber: formData.regNumber.toUpperCase(),
-        mainImage: mainImageDataUrl,
-        images: additionalImageDataUrls,
-        logbookUrl: logbookDataUrl,
-        insuranceDocUrl: insuranceDataUrl,
-        licenseDocUrl: licenseDataUrl,
         status: 'ACTIVE',
         insuranceExpiry: new Date(formData.insuranceExpiry).toISOString(),
         licenseExpiry: formData.licenseExpiry ? new Date(formData.licenseExpiry).toISOString() : null,
@@ -450,22 +459,40 @@ function AddVehicleContent() {
         purchaseDate: formData.purchaseDate ? new Date(formData.purchaseDate).toISOString() : null,
       };
 
-      // Submit vehicle data
       const response = await fetch('/api/admin/vehicles', {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(vehicleData),
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to create vehicle');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create vehicle');
       }
 
+      const createdVehicle = await response.json();
+      const vehicleId = createdVehicle.id;
+      setCreatedVehicleId(vehicleId);
+
+      // Now upload images
+      setUploadingImages(true);
+      
+      // Upload main image
+      if (mainImageFile) {
+        await uploadImageToAPI(mainImageFile, vehicleId, 'main');
+      }
+      
+      // Upload additional images
+      for (const image of additionalImageFiles) {
+        await uploadImageToAPI(image, vehicleId, 'gallery');
+      }
+      
       setSuccess(true);
       
+      // Auto redirect after 2 seconds
       setTimeout(() => {
         router.push('/dashboards/admin/vehicles');
       }, 2000);
@@ -475,23 +502,26 @@ function AddVehicleContent() {
       setError(err.message || 'Failed to create vehicle');
     } finally {
       setLoading(false);
-      setUploading(false);
+      setUploadingImages(false);
     }
   };
 
   const scrollToSection = (sectionId: string) => {
     setActiveSection(sectionId);
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
+    const element = document.getElementById(sectionId);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
   const getSectionStatus = (sectionId: string) => {
     if (completedSections.has(sectionId)) {
-      return <Check className="w-4 h-4 text-green-400" />;
+      return <CheckCircle className="w-4 h-4 text-green-400" />;
     }
     if (activeSection === sectionId) {
       return <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />;
     }
-    return null;
+    return <div className="w-2 h-2 bg-slate-600 rounded-full" />;
   };
 
   // Show loading while Firebase initializes
@@ -512,13 +542,12 @@ function AddVehicleContent() {
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-20 left-10 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse"></div>
         <div className="absolute bottom-20 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000"></div>
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-gradient-to-r from-yellow-500/3 to-amber-500/3 rounded-full blur-3xl"></div>
       </div>
 
       {/* Header */}
       <div className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-xl border-b border-yellow-500/20">
         <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
               <Link
                 href="/dashboards/admin/vehicles"
@@ -542,24 +571,38 @@ function AddVehicleContent() {
               </div>
             </div>
 
-            {/* Progress Indicator */}
-            <div className="hidden lg:flex items-center gap-6">
-              {sections.map((section) => (
-                <button
-                  key={section.id}
-                  onClick={() => scrollToSection(section.id)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${
-                    activeSection === section.id
-                      ? 'bg-yellow-500/10 text-yellow-400'
-                      : 'text-gray-500 hover:text-gray-300 hover:bg-slate-800/50'
-                  }`}
-                >
-                  <section.icon className="w-4 h-4" />
-                  <span className="text-xs font-medium">{section.name}</span>
-                  {getSectionStatus(section.id)}
-                </button>
-              ))}
+            {/* Progress Bar */}
+            <div className="flex-1 max-w-md">
+              <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                <span>Form Progress</span>
+                <span>{Math.round(formProgress)}%</span>
+              </div>
+              <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-yellow-400 to-amber-500 rounded-full transition-all duration-500"
+                  style={{ width: `${formProgress}%` }}
+                />
+              </div>
             </div>
+          </div>
+
+          {/* Section Navigation */}
+          <div className="flex overflow-x-auto gap-2 mt-4 pb-2 scrollbar-thin">
+            {sections.map((section) => (
+              <button
+                key={section.id}
+                onClick={() => scrollToSection(section.id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition whitespace-nowrap ${
+                  activeSection === section.id
+                    ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30'
+                    : 'text-gray-500 hover:text-gray-300 hover:bg-slate-800/50'
+                }`}
+              >
+                <section.icon className="w-4 h-4" />
+                <span className="text-sm font-medium">{section.name}</span>
+                {getSectionStatus(section.id)}
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -569,14 +612,14 @@ function AddVehicleContent() {
         {/* Success Message */}
         {success && (
           <div className="mb-6 p-4 bg-green-500/20 border border-green-500/30 rounded-xl flex items-center gap-3 animate-slideDown">
-            <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
+            <div className="w-10 h-10 bg-green-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
               <CheckCircle className="w-5 h-5 text-green-400" />
             </div>
             <div className="flex-1">
               <p className="text-green-400 font-medium">Vehicle created successfully!</p>
               <p className="text-sm text-green-500/70">Redirecting to vehicles list...</p>
             </div>
-            <div className="w-16 h-1 bg-green-500/30 rounded-full overflow-hidden">
+            <div className="w-24 h-1 bg-green-500/30 rounded-full overflow-hidden">
               <div className="h-full bg-green-400 rounded-full animate-progress"></div>
             </div>
           </div>
@@ -585,7 +628,7 @@ function AddVehicleContent() {
         {/* Error Message */}
         {error && (
           <div className="mb-6 p-4 bg-rose-500/20 border border-rose-500/30 rounded-xl flex items-start gap-3 animate-shake">
-            <div className="w-8 h-8 bg-rose-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+            <div className="w-10 h-10 bg-rose-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
               <AlertTriangle className="w-5 h-5 text-rose-400" />
             </div>
             <div className="flex-1">
@@ -602,19 +645,22 @@ function AddVehicleContent() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Basic Information */}
+          {/* Basic Information - Same as before */}
           <section id="basic" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition group">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
-                    <Car className="w-4 h-4 text-yellow-400" />
-                  </div>
-                  Basic Information
-                </h2>
+                <div>
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                      <Car className="w-4 h-4 text-yellow-400" />
+                    </div>
+                    Basic Information
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1 ml-10">Vehicle identification and registration details</p>
+                </div>
                 {completedSections.has('basic') && (
                   <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded-lg text-xs font-medium flex items-center gap-1">
-                    <Check className="w-3 h-3" /> Completed
+                    <CheckCircle className="w-3 h-3" /> Completed
                   </span>
                 )}
               </div>
@@ -742,19 +788,22 @@ function AddVehicleContent() {
             </div>
           </section>
 
-          {/* Insurance Details */}
+          {/* Insurance Details - Same as before */}
           <section id="insurance" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
-                    <Shield className="w-4 h-4 text-yellow-400" />
-                  </div>
-                  Insurance Details
-                </h2>
+                <div>
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                      <Shield className="w-4 h-4 text-yellow-400" />
+                    </div>
+                    Insurance Details
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1 ml-10">Insurance coverage and policy information</p>
+                </div>
                 {completedSections.has('insurance') && (
                   <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded-lg text-xs font-medium flex items-center gap-1">
-                    <Check className="w-3 h-3" /> Completed
+                    <CheckCircle className="w-3 h-3" /> Completed
                   </span>
                 )}
               </div>
@@ -842,195 +891,23 @@ function AddVehicleContent() {
                     />
                   </div>
                 </div>
-
-                {/* Insurance Document Upload */}
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Insurance Certificate
-                  </label>
-                  <div className="border-2 border-dashed border-yellow-500/20 rounded-xl p-6 hover:border-yellow-400/50 transition cursor-pointer group">
-                    <input
-                      type="file"
-                      onChange={(e) => handleDocumentUpload(e, setInsuranceDoc, setInsurancePreview)}
-                      accept=".pdf,.jpg,.jpeg,.png"
-                      className="hidden"
-                      id="insurance-doc"
-                    />
-                    <label htmlFor="insurance-doc" className="cursor-pointer block text-center">
-                      {insurancePreview ? (
-                        insuranceDoc?.type.startsWith('image/') ? (
-                          <div className="relative w-full h-32">
-                            <Image
-                              src={insurancePreview}
-                              alt="Insurance document"
-                              fill
-                              className="object-contain rounded-lg"
-                            />
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-center gap-2 p-4 bg-slate-800/50 rounded-lg">
-                            <File className="w-8 h-8 text-yellow-400" />
-                            <span className="text-sm text-gray-400">{insurancePreview}</span>
-                          </div>
-                        )
-                      ) : (
-                        <>
-                          <Upload className="w-10 h-10 text-gray-500 mx-auto mb-3 group-hover:text-yellow-400 transition" />
-                          <p className="text-gray-400 group-hover:text-yellow-400 transition">
-                            Click to upload insurance certificate
-                          </p>
-                          <p className="text-xs text-gray-600 mt-2">PDF or Image (max 10MB)</p>
-                        </>
-                      )}
-                    </label>
-                    {insurancePreview && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setInsuranceDoc(null);
-                          setInsurancePreview(null);
-                        }}
-                        className="mt-2 text-xs text-rose-400 hover:text-rose-300 transition flex items-center gap-1 mx-auto"
-                      >
-                        <Trash2 className="w-3 h-3" /> Remove
-                      </button>
-                    )}
-                  </div>
-                </div>
               </div>
             </div>
           </section>
 
-          {/* License & Registration */}
-          <section id="license" className="scroll-mt-24">
-            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
-              <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
-                    <IdCard className="w-4 h-4 text-yellow-400" />
-                  </div>
-                  License & Registration
-                </h2>
-              </div>
-              
-              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* License Number */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Road License Number
-                  </label>
-                  <input
-                    type="text"
-                    name="licenseNumber"
-                    value={formData.licenseNumber}
-                    onChange={handleChange}
-                    className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
-                    placeholder="LIC-2024-123456"
-                  />
-                </div>
-
-                {/* License Expiry */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    License Expiry
-                  </label>
-                  <div className="relative">
-                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                    <input
-                      type="date"
-                      name="licenseExpiry"
-                      value={formData.licenseExpiry}
-                      onChange={handleChange}
-                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
-                    />
-                  </div>
-                </div>
-
-                {/* Registration Date */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    First Registration Date
-                  </label>
-                  <div className="relative">
-                    <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                    <input
-                      type="date"
-                      name="registrationDate"
-                      value={formData.registrationDate}
-                      onChange={handleChange}
-                      className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
-                    />
-                  </div>
-                </div>
-
-                {/* License Document Upload */}
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    License Document
-                  </label>
-                  <div className="border-2 border-dashed border-yellow-500/20 rounded-xl p-6 hover:border-yellow-400/50 transition cursor-pointer group">
-                    <input
-                      type="file"
-                      onChange={(e) => handleDocumentUpload(e, setLicenseDoc, setLicensePreview)}
-                      accept=".pdf,.jpg,.jpeg,.png"
-                      className="hidden"
-                      id="license-doc"
-                    />
-                    <label htmlFor="license-doc" className="cursor-pointer block text-center">
-                      {licensePreview ? (
-                        licenseDoc?.type.startsWith('image/') ? (
-                          <div className="relative w-full h-32">
-                            <Image
-                              src={licensePreview}
-                              alt="License document"
-                              fill
-                              className="object-contain rounded-lg"
-                            />
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-center gap-2 p-4 bg-slate-800/50 rounded-lg">
-                            <File className="w-8 h-8 text-yellow-400" />
-                            <span className="text-sm text-gray-400">{licensePreview}</span>
-                          </div>
-                        )
-                      ) : (
-                        <>
-                          <Upload className="w-10 h-10 text-gray-500 mx-auto mb-3 group-hover:text-yellow-400 transition" />
-                          <p className="text-gray-400 group-hover:text-yellow-400 transition">
-                            Click to upload license document
-                          </p>
-                          <p className="text-xs text-gray-600 mt-2">PDF or Image (max 10MB)</p>
-                        </>
-                      )}
-                    </label>
-                    {licensePreview && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setLicenseDoc(null);
-                          setLicensePreview(null);
-                        }}
-                        className="mt-2 text-xs text-rose-400 hover:text-rose-300 transition flex items-center gap-1 mx-auto"
-                      >
-                        <Trash2 className="w-3 h-3" /> Remove
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Service & Maintenance */}
+          {/* Service & Maintenance - Same as before */}
           <section id="service" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
-                    <Wrench className="w-4 h-4 text-yellow-400" />
-                  </div>
-                  Service & Maintenance
-                </h2>
+                <div>
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                      <Wrench className="w-4 h-4 text-yellow-400" />
+                    </div>
+                    Service & Maintenance
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1 ml-10">Maintenance schedule and service history</p>
+                </div>
               </div>
               
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1149,16 +1026,19 @@ function AddVehicleContent() {
             </div>
           </section>
 
-          {/* Fuel & Technical Specs */}
-          <section id="fuel" className="scroll-mt-24">
+          {/* Technical Specifications - Same as before */}
+          <section id="specs" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
-                    <Fuel className="w-4 h-4 text-yellow-400" />
-                  </div>
-                  Fuel & Technical Specifications
-                </h2>
+                <div>
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                      <Gauge className="w-4 h-4 text-yellow-400" />
+                    </div>
+                    Technical Specifications
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1 ml-10">Vehicle technical details and specifications</p>
+                </div>
               </div>
               
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1260,16 +1140,19 @@ function AddVehicleContent() {
             </div>
           </section>
 
-          {/* Financial Information */}
+          {/* Financial Information - Same as before */}
           <section id="financial" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
-                    <CreditCard className="w-4 h-4 text-yellow-400" />
-                  </div>
-                  Financial Information
-                </h2>
+                <div>
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                      <CreditCard className="w-4 h-4 text-yellow-400" />
+                    </div>
+                    Financial Information
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1 ml-10">Financial targets and purchase details</p>
+                </div>
               </div>
               
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1351,15 +1234,18 @@ function AddVehicleContent() {
           <section id="images" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
-                    <Camera className="w-4 h-4 text-yellow-400" />
-                  </div>
-                  Vehicle Images
-                </h2>
+                <div>
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                      <Camera className="w-4 h-4 text-yellow-400" />
+                    </div>
+                    Vehicle Images
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1 ml-10">Upload vehicle photos (max 10 images)</p>
+                </div>
                 {completedSections.has('images') && (
                   <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded-lg text-xs font-medium flex items-center gap-1">
-                    <Check className="w-3 h-3" /> Completed
+                    <CheckCircle className="w-3 h-3" /> Completed
                   </span>
                 )}
               </div>
@@ -1370,7 +1256,13 @@ function AddVehicleContent() {
                   <label className="block text-sm font-medium text-gray-300 mb-3">
                     Main Vehicle Image <span className="text-rose-400">*</span>
                   </label>
-                  <div className="border-2 border-dashed border-yellow-500/20 rounded-xl p-8 hover:border-yellow-400/50 transition cursor-pointer group">
+                  <div 
+                    className={`border-2 border-dashed rounded-xl p-8 transition cursor-pointer group ${
+                      mainImagePreview 
+                        ? 'border-green-500/50 bg-green-500/5' 
+                        : 'border-yellow-500/20 hover:border-yellow-400/50 bg-slate-900/30'
+                    }`}
+                  >
                     <input
                       type="file"
                       onChange={handleMainImageChange}
@@ -1387,16 +1279,17 @@ function AddVehicleContent() {
                               alt="Main vehicle"
                               fill
                               className="object-contain rounded-lg"
+                              unoptimized
                             />
                           </div>
                           <button
                             type="button"
                             onClick={(e) => {
                               e.preventDefault();
-                              setMainImage(null);
+                              setMainImageFile(null);
                               setMainImagePreview(null);
                             }}
-                            className="absolute top-2 right-2 p-2 bg-rose-500/20 rounded-lg hover:bg-rose-500/30 transition"
+                            className="absolute top-2 right-2 p-2 bg-rose-500/20 rounded-lg hover:bg-rose-500/30 transition backdrop-blur-sm"
                           >
                             <Trash2 className="w-4 h-4 text-rose-400" />
                           </button>
@@ -1404,7 +1297,7 @@ function AddVehicleContent() {
                       ) : (
                         <>
                           <div className="w-20 h-20 bg-yellow-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition">
-                            <ImageIcon className="w-10 h-10 text-yellow-400" />
+                            <Upload className="w-10 h-10 text-yellow-400" />
                           </div>
                           <p className="text-gray-400 group-hover:text-yellow-400 transition font-medium">
                             Click to upload main vehicle image
@@ -1419,9 +1312,18 @@ function AddVehicleContent() {
                 {/* Additional Images */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-3">
-                    Additional Images
+                    Additional Images <span className="text-xs text-gray-500">(Optional, max 10)</span>
                   </label>
-                  <div className="border-2 border-dashed border-yellow-500/20 rounded-xl p-8 hover:border-yellow-400/50 transition cursor-pointer group">
+                  <div 
+                    className={`border-2 border-dashed rounded-xl p-8 transition cursor-pointer ${
+                      isDragging 
+                        ? 'border-yellow-400 bg-yellow-500/10' 
+                        : 'border-yellow-500/20 hover:border-yellow-400/50 bg-slate-900/30'
+                    }`}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                  >
                     <input
                       type="file"
                       onChange={handleAdditionalImagesChange}
@@ -1434,19 +1336,21 @@ function AddVehicleContent() {
                       <div className="w-16 h-16 bg-yellow-500/10 rounded-xl flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition">
                         <Plus className="w-8 h-8 text-yellow-400" />
                       </div>
-                      <p className="text-gray-400 group-hover:text-yellow-400 transition">Add additional images</p>
+                      <p className="text-gray-400 group-hover:text-yellow-400 transition">
+                        {isDragging ? 'Drop images here' : 'Click or drag images here'}
+                      </p>
                       <p className="text-xs text-gray-600 mt-2">You can select multiple images (max 10)</p>
                     </label>
                   </div>
 
                   {/* Image Previews */}
-                  {additionalPreviews.length > 0 && (
+                  {additionalImagePreviews.length > 0 && (
                     <div className="mt-6">
                       <p className="text-sm text-gray-400 mb-3">
-                        {additionalPreviews.length} image{additionalPreviews.length > 1 ? 's' : ''} selected
+                        {additionalImagePreviews.length} image{additionalImagePreviews.length > 1 ? 's' : ''} selected
                       </p>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                        {additionalPreviews.map((preview, index) => (
+                        {additionalImagePreviews.map((preview, index) => (
                           <div key={index} className="relative group">
                             <div className="relative w-full h-32 bg-slate-900/50 rounded-xl overflow-hidden border-2 border-yellow-500/20 group-hover:border-yellow-400/50 transition">
                               <Image
@@ -1454,12 +1358,13 @@ function AddVehicleContent() {
                                 alt={`Additional ${index + 1}`}
                                 fill
                                 className="object-cover"
+                                unoptimized
                               />
                             </div>
                             <button
                               type="button"
                               onClick={() => removeAdditionalImage(index)}
-                              className="absolute -top-2 -right-2 p-1.5 bg-rose-500/20 rounded-lg hover:bg-rose-500/30 transition opacity-0 group-hover:opacity-100"
+                              className="absolute -top-2 -right-2 p-1.5 bg-rose-500/20 rounded-lg hover:bg-rose-500/30 transition opacity-0 group-hover:opacity-100 backdrop-blur-sm"
                             >
                               <X className="w-3 h-3 text-rose-400" />
                             </button>
@@ -1477,12 +1382,15 @@ function AddVehicleContent() {
           <section id="notes" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
-                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
-                    <FileText className="w-4 h-4 text-yellow-400" />
-                  </div>
-                  Additional Notes
-                </h2>
+                <div>
+                  <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                    <div className="w-8 h-8 bg-yellow-500/10 rounded-lg flex items-center justify-center">
+                      <FileText className="w-4 h-4 text-yellow-400" />
+                    </div>
+                    Additional Notes
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1 ml-10">Any additional information about the vehicle</p>
+                </div>
               </div>
               
               <div className="p-6">
@@ -1492,7 +1400,7 @@ function AddVehicleContent() {
                   onChange={handleChange}
                   rows={4}
                   className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition resize-none"
-                  placeholder="Any additional information about the vehicle..."
+                  placeholder="Enter any additional notes about the vehicle, special features, or important information..."
                 />
               </div>
             </div>
@@ -1508,27 +1416,26 @@ function AddVehicleContent() {
             </Link>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || uploadingImages}
               className="px-8 py-3 bg-gradient-to-r from-yellow-400 to-amber-500 text-black font-medium rounded-xl shadow-lg shadow-yellow-500/30 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:from-yellow-300 hover:to-amber-400 transition group relative overflow-hidden"
             >
-              {loading ? (
+              {loading || uploadingImages ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>{uploading ? 'Uploading to Database...' : 'Creating Vehicle...'}</span>
+                  <span>{uploadingImages ? 'Uploading Images...' : 'Saving Vehicle...'}</span>
                 </>
               ) : (
                 <>
-                  <Truck className="w-5 h-5 group-hover:scale-110 transition" />
-                  Add Vehicle
+                  <Save className="w-5 h-5 group-hover:scale-110 transition" />
+                  Save Vehicle
                 </>
               )}
               
-              {loading && (
+              {(loading || uploadingImages) && (
                 <div className="absolute bottom-0 left-0 w-full h-1 bg-black/20">
                   <div 
                     className="h-full bg-white/50 animate-progress" 
-                    style={{ width: uploading ? '60%' : '80%' }}
-                  ></div>
+                  />
                 </div>
               )}
             </button>

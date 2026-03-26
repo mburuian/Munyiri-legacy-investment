@@ -171,7 +171,7 @@ const defaultStats: DashboardStats = {
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboards/admin", active: true },
   { icon: Truck, label: "Vehicles", href: "/dashboards/admin/vehicles" },
-  { icon: Users, label: "Drivers", href: "/dashboards/admin/drivers" },
+  { icon: Users, label: "Drivers", href: "/dashboards/admin/driver" },
   { icon: DollarSign, label: "Income", href: "/dashboards/admin/income" },
   { icon: FileText, label: "Reports", href: "/dashboards/admin/reports" },
   { icon: Shield, label: "Integrations", href: "/dashboards/admin/integrations" },

@@ -18,7 +18,11 @@ import {
   Users,
   Clock,
   KeyRound,
-  UserCheck
+  UserCheck,
+  ChevronRight,
+  Smartphone,
+  Laptop,
+  MapPin
 } from "lucide-react";
 
 // Firebase will be dynamically imported on client side only
@@ -44,6 +48,7 @@ function LoginForm() {
     email: "",
     password: ""
   });
+  const [rememberMe, setRememberMe] = useState(false);
 
   // Load Firebase dynamically on client side only
   useEffect(() => {
@@ -57,6 +62,13 @@ function LoginForm() {
         signInWithPopup = authModule.signInWithPopup;
         GoogleAuthProvider = authModule.GoogleAuthProvider;
         setFirebaseReady(true);
+        
+        // Load saved email if remember me was checked
+        const savedEmail = localStorage.getItem('rememberedEmail');
+        if (savedEmail) {
+          setFormData(prev => ({ ...prev, email: savedEmail }));
+          setRememberMe(true);
+        }
       } catch (error) {
         console.error('Failed to load Firebase:', error);
         setError('Failed to initialize authentication');
@@ -114,6 +126,13 @@ function LoginForm() {
     setLoading(true);
 
     try {
+      // Save email if remember me is checked
+      if (rememberMe) {
+        localStorage.setItem('rememberedEmail', formData.email);
+      } else {
+        localStorage.removeItem('rememberedEmail');
+      }
+      
       const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
       await redirectBasedOnRoleAndClaims(userCredential.user);
     } catch (err: any) {
@@ -161,8 +180,8 @@ function LoginForm() {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-400">Loading...</p>
+          <div className="w-10 h-10 sm:w-12 sm:h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-3"></div>
+          <p className="text-gray-400 text-sm">Loading...</p>
         </div>
       </div>
     );
@@ -173,139 +192,139 @@ function LoginForm() {
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
           <div className="relative">
-            <div className="w-20 h-20 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
-            <Car className="w-8 h-8 text-yellow-400 absolute top-6 left-1/2 -translate-x-1/2 animate-pulse" />
+            <div className="w-16 h-16 sm:w-20 sm:h-20 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-3"></div>
+            <Car className="w-6 h-6 sm:w-8 sm:h-8 text-yellow-400 absolute top-5 left-1/2 -translate-x-1/2 animate-pulse" />
           </div>
-          <p className="text-white text-lg">Redirecting to dashboard...</p>
+          <p className="text-white text-base sm:text-lg">Redirecting to dashboard...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="relative w-full max-w-5xl">
-      <div className="bg-slate-900/80 backdrop-blur-xl rounded-3xl shadow-2xl border border-yellow-500/20 overflow-hidden">
-        <div className="grid md:grid-cols-2 min-h-[650px]">
-          {/* Left Column - Logo & Branding */}
-          <div className="relative bg-gradient-to-br from-slate-900 to-slate-800 p-8 md:p-12 flex flex-col items-center justify-center overflow-hidden border-r border-yellow-500/20">
+    <div className="relative w-full max-w-5xl px-3 sm:px-4">
+      <div className="bg-slate-900/80 backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-2xl border border-yellow-500/20 overflow-hidden">
+        <div className="flex flex-col md:flex-row min-h-[auto] md:min-h-[650px]">
+          {/* Left Column - Logo & Branding (Mobile: Top, Desktop: Left) */}
+          <div className="relative bg-gradient-to-br from-slate-900 to-slate-800 p-6 sm:p-8 md:p-10 lg:p-12 flex flex-col items-center justify-center overflow-hidden border-b md:border-b-0 md:border-r border-yellow-500/20">
             <div className="absolute inset-0 opacity-20">
-              <div className="absolute top-0 -left-40 w-80 h-80 bg-yellow-500/20 rounded-full blur-3xl"></div>
-              <div className="absolute bottom-0 -right-20 w-60 h-60 bg-amber-500/20 rounded-full blur-3xl"></div>
+              <div className="absolute top-0 -left-40 w-60 h-60 sm:w-80 sm:h-80 bg-yellow-500/20 rounded-full blur-3xl"></div>
+              <div className="absolute bottom-0 -right-20 w-40 h-40 sm:w-60 sm:h-60 bg-amber-500/20 rounded-full blur-3xl"></div>
             </div>
 
-            <div className="relative text-center md:text-left flex flex-col items-center md:items-start">
-              <div className="mb-8 relative">
-                <div className="relative w-48 h-48 md:w-56 md:h-56 lg:w-64 lg:h-64 group">
+            <div className="relative text-center flex flex-col items-center">
+              {/* Logo - Smaller on mobile */}
+              <div className="mb-4 sm:mb-6 md:mb-8">
+                <div className="relative w-28 h-28 sm:w-36 sm:h-36 md:w-44 md:h-44 lg:w-56 lg:h-56 group">
                   <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 to-amber-500 rounded-full blur-2xl opacity-30 group-hover:opacity-50 transition-opacity"></div>
-                  <div className="relative w-full h-full bg-slate-800 rounded-full p-4 border-4 border-yellow-400/30">
+                  <div className="relative w-full h-full bg-slate-800 rounded-full p-3 sm:p-4 border-4 border-yellow-400/30">
                     <Image 
                       src="/logo.png" 
                       alt="MLI Logo" 
                       fill
-                      className="object-contain drop-shadow-2xl p-4"
+                      className="object-contain drop-shadow-2xl p-2 sm:p-3"
                       priority
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <h2 className="text-4xl md:text-5xl lg:text-6xl font-bold bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-400 bg-clip-text text-transparent">
+              {/* Branding Text - Smaller fonts on mobile */}
+              <div className="space-y-1 sm:space-y-2">
+                <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-400 bg-clip-text text-transparent">
                   Munyiri Legacy
                 </h2>
-                <p className="text-lg md:text-xl lg:text-2xl text-gray-300 font-light flex items-center gap-2 justify-center md:justify-start">
-                  <Navigation2 className="w-5 h-5 text-yellow-400" />
+                <p className="text-sm sm:text-base md:text-lg lg:text-xl text-gray-300 font-light flex items-center gap-1 sm:gap-2 justify-center">
+                  <Navigation2 className="w-3 h-3 sm:w-4 sm:h-4 text-yellow-400" />
                   Driving Excellence, Delivering Legacy
                 </p>
               </div>
 
-              <div className="w-32 h-1 bg-gradient-to-r from-yellow-400 to-amber-400 rounded-full my-8 relative overflow-hidden">
+              <div className="w-20 sm:w-24 md:w-32 h-0.5 bg-gradient-to-r from-yellow-400 to-amber-400 rounded-full my-4 sm:my-6 md:my-8 relative overflow-hidden">
                 <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
               </div>
 
-              <p className="text-gray-400 text-sm md:text-base max-w-sm text-center md:text-left leading-relaxed">
-                East Africa's leading <span className="text-yellow-400">fleet management platform</span>. Track vehicles, manage drivers, and optimize your operations with real-time insights.
-              </p>
-
-              <div className="mt-10 grid grid-cols-2 gap-8 w-full">
-                <div className="text-center md:text-left p-4 bg-slate-800/30 rounded-xl border border-yellow-500/10">
-                  <div className="text-3xl md:text-4xl font-bold text-white flex items-center gap-2 justify-center md:justify-start">
-                    <Car className="w-6 h-6 text-yellow-400" />
+              {/* Stats - Stack on mobile, horizontal on larger */}
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 w-full max-w-xs sm:max-w-sm">
+                <div className="text-center p-2 sm:p-3 bg-slate-800/30 rounded-lg border border-yellow-500/10">
+                  <div className="text-xl sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-1 sm:gap-2 justify-center">
+                    <Car className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-400" />
                     500+
                   </div>
-                  <div className="text-xs md:text-sm text-gray-500 mt-1">Fleets Managed</div>
+                  <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1">Fleets Managed</div>
                 </div>
-                <div className="text-center md:text-left p-4 bg-slate-800/30 rounded-xl border border-yellow-500/10">
-                  <div className="text-3xl md:text-4xl font-bold text-white flex items-center gap-2 justify-center md:justify-start">
-                    <Users className="w-6 h-6 text-yellow-400" />
+                <div className="text-center p-2 sm:p-3 bg-slate-800/30 rounded-lg border border-yellow-500/10">
+                  <div className="text-xl sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-1 sm:gap-2 justify-center">
+                    <Users className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-400" />
                     10k+
                   </div>
-                  <div className="text-xs md:text-sm text-gray-500 mt-1">Vehicles Tracked</div>
+                  <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 sm:mt-1">Vehicles Tracked</div>
                 </div>
               </div>
 
-              <div className="mt-8 inline-flex items-center gap-3 bg-slate-800/50 backdrop-blur-sm px-4 py-2 rounded-full border border-yellow-500/20">
-                <span className="relative flex h-2 w-2">
+              {/* Online Status - Hide on very small screens */}
+              <div className="hidden sm:flex mt-4 sm:mt-6 md:mt-8 inline-flex items-center gap-2 bg-slate-800/50 backdrop-blur-sm px-3 py-1.5 sm:px-4 sm:py-2 rounded-full border border-yellow-500/20">
+                <span className="relative flex h-1.5 w-1.5 sm:h-2 sm:w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 sm:h-2 sm:w-2 bg-yellow-500"></span>
                 </span>
-                <span className="text-xs md:text-sm text-gray-300">2,847 vehicles online now</span>
+                <span className="text-[10px] sm:text-xs text-gray-300">2,847 vehicles online</span>
               </div>
             </div>
           </div>
 
           {/* Right Column - Login Form */}
-          <div className="p-8 md:p-10">
+          <div className="p-5 sm:p-6 md:p-8 lg:p-10">
             <div className="max-w-md mx-auto">
-              <div className="mb-8">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-8 h-8 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-lg flex items-center justify-center">
-                    <KeyRound className="w-4 h-4 text-black" />
+              <div className="mb-4 sm:mb-6 md:mb-8">
+                <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-2">
+                  <div className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-lg flex items-center justify-center">
+                    <KeyRound className="w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4 text-black" />
                   </div>
-                  <h1 className="text-3xl font-bold text-white">Welcome Back</h1>
+                  <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-white">Welcome Back</h1>
                 </div>
-                <p className="text-gray-400 flex items-center gap-2">
+                <p className="text-xs sm:text-sm text-gray-400 flex items-center gap-1 sm:gap-2">
                   <span className="w-1 h-1 bg-yellow-400 rounded-full"></span>
                   Sign in to access your fleet dashboard
                 </p>
               </div>
 
-              <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
-                <p className="text-xs text-blue-400 flex items-start gap-2">
-                  <Shield className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span>
-                    <strong>🔐 First time logging in?</strong> Use the temporary password provided by your admin. 
-                    You'll be prompted to set a new password immediately.
+              {/* First Time Login Notice - More compact on mobile */}
+              <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg sm:rounded-xl">
+                <p className="text-[11px] sm:text-xs text-blue-400 flex items-start gap-1.5 sm:gap-2">
+                  <Shield className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0 mt-0.5" />
+                  <span className="leading-tight">
+                    <strong>🔐 First time?</strong> Use temporary password from admin. You'll set a new password immediately.
                   </span>
                 </p>
               </div>
 
               {error && (
-                <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-                  <p className="text-red-400 text-sm">{error}</p>
+                <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-red-500/10 border border-red-500/20 rounded-lg sm:rounded-xl flex items-start gap-2 sm:gap-3">
+                  <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-red-400 text-xs sm:text-sm">{error}</p>
                 </div>
               )}
 
               {formData.email && isAdminEmail(formData.email) && (
-                <div className="mb-6 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-yellow-400" />
-                  <p className="text-yellow-400 text-xs">Admin login detected. You'll be redirected to admin dashboard.</p>
+                <div className="mb-4 sm:mb-6 p-2.5 sm:p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg sm:rounded-xl flex items-center gap-1.5 sm:gap-2">
+                  <Shield className="w-3 h-3 sm:w-4 sm:h-4 text-yellow-400" />
+                  <p className="text-yellow-400 text-[10px] sm:text-xs">Admin login detected. You'll be redirected to admin dashboard.</p>
                 </div>
               )}
 
-              <form onSubmit={handleSubmit} className="space-y-5">
+              <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4 md:space-y-5">
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Email Address</label>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-300 mb-1 sm:mb-2">Email Address</label>
                   <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-gray-500" />
                     <input
                       type="email"
                       name="email"
                       value={formData.email}
                       onChange={handleChange}
                       required
-                      className="w-full bg-slate-800/50 border border-gray-700 rounded-xl py-3 pl-10 pr-4 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-500 transition"
+                      className="w-full bg-slate-800/50 border border-gray-700 rounded-lg sm:rounded-xl py-2.5 sm:py-3 pl-9 sm:pl-10 pr-3 sm:pr-4 text-white text-sm sm:text-base placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-500 transition"
                       placeholder="Enter your email"
                       disabled={loading || googleLoading}
                     />
@@ -313,16 +332,16 @@ function LoginForm() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Password</label>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-300 mb-1 sm:mb-2">Password</label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-gray-500" />
                     <input
                       type={showPassword ? "text" : "password"}
                       name="password"
                       value={formData.password}
                       onChange={handleChange}
                       required
-                      className="w-full bg-slate-800/50 border border-gray-700 rounded-xl py-3 pl-10 pr-12 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-500 transition"
+                      className="w-full bg-slate-800/50 border border-gray-700 rounded-lg sm:rounded-xl py-2.5 sm:py-3 pl-9 sm:pl-10 pr-9 sm:pr-12 text-white text-sm sm:text-base placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-500 transition"
                       placeholder="Enter your password"
                       disabled={loading || googleLoading}
                     />
@@ -331,17 +350,22 @@ function LoginForm() {
                       onClick={() => setShowPassword(!showPassword)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition"
                     >
-                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      {showPassword ? <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" /> : <Eye className="w-4 h-4 sm:w-5 sm:h-5" />}
                     </button>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center">
-                    <input type="checkbox" className="w-4 h-4 bg-slate-800 border-gray-700 rounded text-yellow-400 focus:ring-yellow-500" />
-                    <span className="ml-2 text-sm text-gray-400">Remember me</span>
+                <div className="flex items-center justify-between text-xs sm:text-sm">
+                  <label className="flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-800 border-gray-700 rounded text-yellow-400 focus:ring-yellow-500" 
+                    />
+                    <span className="ml-1.5 sm:ml-2 text-gray-400">Remember me</span>
                   </label>
-                  <Link href="/forgot-password" className="text-sm text-yellow-400 hover:text-yellow-300 transition">
+                  <Link href="/forgot-password" className="text-yellow-400 hover:text-yellow-300 transition text-xs sm:text-sm">
                     Forgot Password?
                   </Link>
                 </div>
@@ -349,18 +373,18 @@ function LoginForm() {
                 <button
                   type="submit"
                   disabled={loading || googleLoading}
-                  className="w-full bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 text-black font-semibold py-3 rounded-xl transition-all shadow-lg shadow-yellow-500/30 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 text-black font-semibold py-2.5 sm:py-3 rounded-lg sm:rounded-xl transition-all shadow-lg shadow-yellow-500/30 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
                 >
                   {loading ? (
-                    <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+                    <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
                   ) : (
-                    <>Sign In <ArrowRight className="w-5 h-5" /></>
+                    <>Sign In <ArrowRight className="w-4 h-4 sm:w-5 sm:h-5" /></>
                   )}
                 </button>
               </form>
 
-              <div className="mt-6 text-center">
-                <p className="text-gray-400">
+              <div className="mt-4 sm:mt-6 text-center">
+                <p className="text-xs sm:text-sm text-gray-400">
                   Don't have an account?{' '}
                   <Link href="/auth/signup" className="text-yellow-400 hover:text-yellow-300 font-medium transition">
                     Create Account
@@ -368,26 +392,26 @@ function LoginForm() {
                 </p>
               </div>
 
-              <div className="mt-8">
-                <div className="relative mb-6">
+              <div className="mt-5 sm:mt-6 md:mt-8">
+                <div className="relative mb-4 sm:mb-6">
                   <div className="absolute inset-0 flex items-center">
                     <div className="w-full border-t border-yellow-500/20"></div>
                   </div>
-                  <div className="relative flex justify-center text-sm">
-                    <span className="px-4 bg-slate-900 text-gray-500">Or continue with</span>
+                  <div className="relative flex justify-center text-xs sm:text-sm">
+                    <span className="px-3 sm:px-4 bg-slate-900 text-gray-500">Or continue with</span>
                   </div>
                 </div>
 
                 <button
                   onClick={handleGoogleSignIn}
                   disabled={googleLoading || loading}
-                  className="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed border border-yellow-500/20 hover:border-yellow-400/50"
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2.5 sm:py-3 rounded-lg sm:rounded-xl transition-all shadow-md flex items-center justify-center gap-2 sm:gap-3 disabled:opacity-50 disabled:cursor-not-allowed border border-yellow-500/20 hover:border-yellow-400/50 text-sm sm:text-base"
                 >
                   {googleLoading ? (
-                    <div className="w-6 h-6 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                    <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
                   ) : (
                     <>
-                      <svg className="w-5 h-5" viewBox="0 0 24 24">
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5" viewBox="0 0 24 24">
                         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
                         <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
                         <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
@@ -399,17 +423,19 @@ function LoginForm() {
                 </button>
               </div>
 
-              <div className="mt-8 pt-6 border-t border-yellow-500/20">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <UserCheck className="w-4 h-4 text-yellow-400" />
-                  <span>Drivers: Please use credentials provided by your administrator</span>
+              {/* Mobile Driver Info - Only visible on small screens */}
+              <div className="mt-4 sm:mt-6 pt-4 sm:pt-6 border-t border-yellow-500/20">
+                <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-gray-500">
+                  <UserCheck className="w-3 h-3 sm:w-4 sm:h-4 text-yellow-400" />
+                  <span className="leading-tight">Drivers: Use credentials provided by your administrator</span>
                 </div>
               </div>
 
-              <div className="mt-6 flex items-center justify-center gap-4 text-xs text-gray-600">
-                <span className="flex items-center gap-1"><Shield className="w-3 h-3 text-yellow-400/50" /> Secure Login</span>
-                <span className="w-1 h-1 bg-yellow-500/30 rounded-full"></span>
-                <span className="flex items-center gap-1"><Clock className="w-3 h-3 text-yellow-400/50" /> 24/7 Access</span>
+              <div className="mt-4 sm:mt-5 flex items-center justify-center gap-2 sm:gap-3 text-[10px] sm:text-xs text-gray-600">
+                <span className="flex items-center gap-0.5 sm:gap-1"><Shield className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-400/50" /> Secure Login</span>
+                <span className="w-0.5 h-0.5 bg-yellow-500/30 rounded-full"></span>
+                <span className="flex items-center gap-0.5 sm:gap-1"><Clock className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-400/50" /> 24/7 Access</span>
+                <span className="hidden xs:inline-flex items-center gap-0.5 sm:gap-1"><Smartphone className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-400/50" /> Mobile Ready</span>
               </div>
             </div>
           </div>
@@ -423,8 +449,8 @@ function LoginFallback() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
       <div className="text-center">
-        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
-        <p className="text-gray-400">Loading...</p>
+        <div className="w-10 h-10 sm:w-12 sm:h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-3"></div>
+        <p className="text-gray-400 text-sm">Loading...</p>
       </div>
     </div>
   );
@@ -432,17 +458,17 @@ function LoginFallback() {
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4 font-sans overflow-x-hidden">
-      {/* Animated Background */}
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-3 sm:p-4 font-sans overflow-x-hidden">
+      {/* Animated Background - Simplified for mobile */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 left-0 w-full h-full opacity-10">
+        <div className="absolute top-0 left-0 w-full h-full opacity-5 sm:opacity-10">
           <div className="relative w-full h-full">
-            {[...Array(20)].map((_, i) => (
+            {[...Array(10)].map((_, i) => (
               <div
                 key={i}
-                className="absolute w-full h-0.5 bg-yellow-400"
+                className="absolute w-full h-0.5 bg-yellow-400 hidden sm:block"
                 style={{
-                  top: `${i * 5}%`,
+                  top: `${i * 10}%`,
                   transform: `translateX(${i % 2 === 0 ? '-50%' : '0'})`,
                   animation: `moveRoad ${15 + i}s linear infinite`,
                   opacity: 0.3
@@ -452,32 +478,27 @@ export default function LoginPage() {
           </div>
         </div>
         
-        <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-yellow-500/5 to-transparent">
+        <div className="absolute bottom-0 left-0 w-full h-20 sm:h-32 bg-gradient-to-t from-yellow-500/5 to-transparent">
           <div className="flex justify-around items-end h-full">
-            {buildingHeights.map((height, i) => (
+            {buildingHeights.slice(0, 8).map((height, i) => (
               <div
                 key={i}
-                className="w-16 bg-yellow-500/10"
-                style={{ height: `${height}px`, transform: `skewX(-10deg)` }}
+                className="w-8 sm:w-12 md:w-16 bg-yellow-500/10 hidden sm:block"
+                style={{ height: `${height * 0.6}px`, transform: `skewX(-10deg)` }}
               />
             ))}
           </div>
         </div>
 
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-yellow-500/10 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl animate-pulse animation-delay-2000"></div>
+        <div className="absolute -top-40 -right-40 w-64 h-64 sm:w-96 sm:h-96 bg-yellow-500/10 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute -bottom-40 -left-40 w-64 h-64 sm:w-96 sm:h-96 bg-amber-500/10 rounded-full blur-3xl animate-pulse animation-delay-2000"></div>
       </div>
 
       <Suspense fallback={<LoginFallback />}>
         <LoginForm />
       </Suspense>
 
-      <div className="text-center mt-6 relative z-10">
-        <Link href="/" className="text-gray-500 hover:text-yellow-400 text-sm transition inline-flex items-center gap-2 group">
-          <ArrowRight className="w-4 h-4 rotate-180 group-hover:-translate-x-1 transition-transform" />
-          Back to Home
-        </Link>
-      </div>
+      
 
       <style jsx>{`
         @keyframes moveRoad {
@@ -485,6 +506,12 @@ export default function LoginPage() {
           100% { transform: translateX(100%); }
         }
         .animation-delay-2000 { animation-delay: 2s; }
+        
+        @media (max-width: 480px) {
+          .xs\\:inline-flex {
+            display: inline-flex;
+          }
+        }
       `}</style>
     </div>
   );
