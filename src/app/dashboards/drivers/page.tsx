@@ -150,7 +150,6 @@ const menuItems = [
   { icon: Car, label: "My Vehicle", href: "/dashboards/drivers/vehicle" },
   { icon: ClipboardList, label: "Trip History", href: "/dashboards/drivers/trips" },
   { icon: Receipt, label: "Expenses", href: "/dashboards/drivers/expenses" },
-  { icon: Settings, label: "Settings", href: "/dashboards/drivers/settings" },
 ];
 
 function DriverDashboardContent() {

@@ -101,6 +101,7 @@ interface Vehicle {
   fuelLevel?: number;
   nextService?: string;
   insuranceExpiry?: string;
+  mainImage?: string | null;
   images?: VehicleImage[];
   driver?: {
     user: {
@@ -215,8 +216,8 @@ function DashboardContent() {
   const [notifications, setNotifications] = useState<Alert[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [logoError, setLogoError] = useState(false);
-  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const [firebaseReady, setFirebaseReady] = useState(false);
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
   // Load Firebase dynamically on client side only
   useEffect(() => {
@@ -347,40 +348,46 @@ function DashboardContent() {
         }
       }
       
-      console.log('Vehicles loaded:', vehiclesArray.length);
-      
-      // Fetch images for each vehicle
+      // Fetch images for each vehicle from the upload API
       const vehiclesWithImages = await Promise.all(
         vehiclesArray.map(async (vehicle) => {
           try {
-            console.log(`Fetching images for vehicle ${vehicle.id} - ${vehicle.plateNumber}`);
+            console.log(`Fetching images for vehicle ${vehicle.id} (${vehicle.plateNumber})`);
             const imagesResponse = await fetch(`/api/upload?entityType=vehicle&entityId=${vehicle.id}`, {
               headers: { 'Authorization': `Bearer ${token}` }
             });
             
             if (imagesResponse.ok) {
               const imagesData = await imagesResponse.json();
-              console.log(`Images for vehicle ${vehicle.id} (${vehicle.plateNumber}):`, imagesData.images?.length || 0, 'images');
+              console.log(`📸 Vehicle ${vehicle.plateNumber} has ${imagesData.images?.length || 0} images`);
               if (imagesData.images && imagesData.images.length > 0) {
-                console.log(`First image URL preview:`, imagesData.images[0].url?.substring(0, 100));
+                const firstImage = imagesData.images[0];
+                console.log(`  First image URL type: ${firstImage.url?.substring(0, 50)}...`);
+                console.log(`  Is primary: ${firstImage.isPrimary}`);
               }
-              return { ...vehicle, images: imagesData.images || [] };
+              return { 
+                ...vehicle, 
+                images: imagesData.images || [],
+                mainImage: null // Clear any old mainImage to use images array
+              };
             } else {
               console.error(`Failed to fetch images for vehicle ${vehicle.id}: ${imagesResponse.status}`);
+              return { 
+                ...vehicle, 
+                images: [],
+                mainImage: null
+              };
             }
           } catch (error) {
             console.error(`Error fetching images for vehicle ${vehicle.id}:`, error);
+            return { 
+              ...vehicle, 
+              images: [],
+              mainImage: null
+            };
           }
-          return { ...vehicle, images: [] };
         })
       );
-      
-      console.log('Vehicles with images summary:', vehiclesWithImages.map(v => ({ 
-        id: v.id, 
-        plate: v.plateNumber, 
-        hasImages: (v.images?.length || 0) > 0,
-        imageCount: v.images?.length || 0
-      })));
       
       setVehicles(vehiclesWithImages);
       
@@ -459,7 +466,7 @@ function DashboardContent() {
   };
 
   const handleAddVehicle = () => {
-    router.push('/dashboards/admin/vehicles/add');
+    router.push('/dashboards/admin/vehicles/add-vehicle');
   };
 
   const handleAddDriver = () => {
@@ -474,10 +481,6 @@ function DashboardContent() {
     router.push('/dashboards/admin/expenses/add');
   };
 
-  const handleGenerateReport = () => {
-    router.push('/dashboards/admin/reports/generate');
-  };
-
   const vehiclesNeedingService = vehicles.filter(v => {
     if (!v.nextService) return false;
     const daysUntilService = Math.ceil((new Date(v.nextService).getTime() - new Date().getTime()) / (1000 * 3600 * 24));
@@ -485,14 +488,35 @@ function DashboardContent() {
   });
 
   const getVehiclePrimaryImage = (vehicle: Vehicle): string | null => {
+    // Debug: Log what we have
+    console.log(`Getting image for vehicle ${vehicle.plateNumber}:`, {
+      hasImages: !!vehicle.images,
+      imagesCount: vehicle.images?.length || 0,
+      hasMainImage: !!vehicle.mainImage
+    });
+
+    // First check if we have images from the API (vehicle.images array)
     if (vehicle.images && vehicle.images.length > 0) {
       const primaryImage = vehicle.images.find(img => img.isPrimary);
-      const imageUrl = primaryImage?.url || vehicle.images[0]?.url || null;
+      const imageUrl = primaryImage?.url || vehicle.images[0]?.url;
       if (imageUrl) {
-        console.log(`Found image for vehicle ${vehicle.plateNumber}: ${imageUrl.substring(0, 50)}...`);
+        // Validate that it's a proper image URL (starts with data:image or http)
+        if (imageUrl.startsWith('data:image') || imageUrl.startsWith('http')) {
+          console.log(`✅ Using API image for ${vehicle.plateNumber}`);
+          return imageUrl;
+        } else {
+          console.warn(`⚠️ Invalid image URL format for ${vehicle.plateNumber}:`, imageUrl.substring(0, 100));
+        }
       }
-      return imageUrl;
     }
+    
+    // Check if there's a mainImage that looks like base64 (starts with data:image)
+    if (vehicle.mainImage && vehicle.mainImage.startsWith('data:image')) {
+      console.log(`✅ Using base64 mainImage for ${vehicle.plateNumber}`);
+      return vehicle.mainImage;
+    }
+    
+    console.log(`❌ No valid image found for ${vehicle.plateNumber}`);
     return null;
   };
 
@@ -990,8 +1014,10 @@ function DashboardContent() {
                                     alt={vehicle.plateNumber || 'Vehicle'}
                                     className="w-full h-full object-cover"
                                     onError={(e) => {
-                                      console.error(`Failed to load image for vehicle ${vehicle.plateNumber}:`, primaryImage.substring(0, 100));
+                                      console.error(`Failed to load image for vehicle ${vehicle.plateNumber}`);
+                                      console.error(`Image URL: ${primaryImage.substring(0, 100)}...`);
                                       e.currentTarget.style.display = 'none';
+                                      // Show fallback
                                       const parent = e.currentTarget.parentElement;
                                       if (parent) {
                                         const fallback = document.createElement('div');
@@ -1001,9 +1027,6 @@ function DashboardContent() {
                                         e.currentTarget.remove();
                                       }
                                     }}
-                                    onLoad={() => {
-                                      console.log(`Successfully loaded image for vehicle ${vehicle.plateNumber}`);
-                                    }}
                                   />
                                 </div>
                               ) : (
@@ -1011,18 +1034,18 @@ function DashboardContent() {
                                   <ImageIcon className="w-6 h-6 text-gray-500" />
                                 </div>
                               )}
-                            </td>
+                             </td>
                             <td className="py-3 font-medium">{vehicle.plateNumber || 'N/A'}</td>
                             <td className="py-3 text-gray-400">{vehicle.model || 'N/A'}</td>
                             <td className="py-3 text-gray-400">{vehicle.driver?.user?.name || 'Unassigned'}</td>
                             <td className="py-3">
                               <StatusBadge status={vehicle.status || 'INACTIVE'} />
-                            </td>
+                             </td>
                             <td className="py-3">
                               <span className={`text-xs ${getServiceStatus(vehicle.nextService)}`}>
                                 {vehicle.nextService ? new Date(vehicle.nextService).toLocaleDateString() : 'Not set'}
                               </span>
-                            </td>
+                             </td>
                             <td className="py-3">
                               <div className="flex items-center justify-center gap-2">
                                 <button 
@@ -1038,7 +1061,7 @@ function DashboardContent() {
                                   <Edit className="w-4 h-4 text-gray-400" />
                                 </button>
                               </div>
-                            </td>
+                             </td>
                           </tr>
                         );
                       })}
@@ -1097,7 +1120,7 @@ function DashboardContent() {
                         <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
                         <th className="text-left py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Rating</th>
                         <th className="text-center py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
-                      </tr>
+                       </tr>
                     </thead>
                     <tbody className="divide-y divide-yellow-500/10">
                       {drivers.slice(0, 5).map((driver) => (
@@ -1107,19 +1130,19 @@ function DashboardContent() {
                               <span className="font-medium text-sm">{driver.name || 'N/A'}</span>
                               <p className="text-xs text-gray-500 truncate max-w-[150px]">{driver.email || 'N/A'}</p>
                             </div>
-                          </td>
+                           </td>
                           <td className="py-3 text-sm text-gray-400">{driver.assignedVehicle?.plateNumber || 'Unassigned'}</td>
                           <td className="py-3 text-right text-sm font-medium">{(driver.tripsCompleted || 0).toLocaleString()}</td>
                           <td className="py-3 text-right text-sm text-yellow-400">{formatCurrency(driver.totalRevenue || 0)}</td>
                           <td className="py-3">
                             <DriverStatusBadge status={driver.status || 'OFF_DUTY'} />
-                          </td>
+                           </td>
                           <td className="py-3">
                             <div className="flex items-center gap-1">
                               <Award className="w-3 h-3 text-yellow-400" />
                               <span className="text-sm">{(driver.rating || 0).toFixed(1)}</span>
                             </div>
-                          </td>
+                           </td>
                           <td className="py-3">
                             <div className="flex items-center justify-center gap-2">
                               <button 
@@ -1135,8 +1158,8 @@ function DashboardContent() {
                                 <Edit className="w-4 h-4 text-gray-400" />
                               </button>
                             </div>
-                          </td>
-                        </tr>
+                           </td>
+                         </tr>
                       ))}
                     </tbody>
                   </table>
@@ -1194,12 +1217,6 @@ function DashboardContent() {
                 label="Log Expense"
                 color="rose"
                 onClick={handleLogExpense}
-              />
-              <QuickActionButton
-                icon={FileText}
-                label="Generate Report"
-                color="purple"
-                onClick={handleGenerateReport}
               />
             </div>
           </div>
