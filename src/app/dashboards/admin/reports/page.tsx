@@ -1,7 +1,8 @@
-'use client';
+// src/app/dashboards/admin/reports/page.tsx
+"use client";
 
-import { useState, useEffect, Suspense } from 'react';
-import Link from 'next/link';
+import { useState, useEffect, Suspense } from "react";
+import Link from "next/link";
 import {
   ArrowLeft,
   Download,
@@ -131,7 +132,7 @@ function ReportsContent() {
   const [reportType, setReportType] = useState<'full' | 'income' | 'expenses' | 'vehicles' | 'drivers'>('full');
   const [viewMode, setViewMode] = useState<'summary' | 'detailed'>('summary');
   const [showFilters, setShowFilters] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'csv' | 'pdf' | 'json'>('csv');
+  const [exportFormat, setExportFormat] = useState<'csv' | 'json'>('csv');
   const [exporting, setExporting] = useState(false);
   const [firebaseReady, setFirebaseReady] = useState(false);
 
@@ -167,7 +168,7 @@ function ReportsContent() {
     });
 
     return () => unsubscribe();
-  }, [dateRange, customStartDate, customEndDate, selectedVehicle, selectedDriver, firebaseReady]);
+  }, [dateRange, customStartDate, customEndDate, selectedVehicle, selectedDriver, reportType, firebaseReady]);
 
   const getDateRangeParams = () => {
     const now = new Date();
@@ -176,35 +177,42 @@ function ReportsContent() {
 
     switch (dateRange) {
       case 'today':
-        startDate = new Date(now.setHours(0, 0, 0, 0));
-        endDate = new Date(now.setHours(23, 59, 59, 999));
+        startDate = new Date(now);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(now);
+        endDate.setHours(23, 59, 59, 999);
         break;
       case 'week':
         const weekStart = new Date(now);
         weekStart.setDate(now.getDate() - now.getDay());
         weekStart.setHours(0, 0, 0, 0);
         startDate = weekStart;
-        endDate = new Date();
+        endDate = new Date(now);
         break;
       case 'month':
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        monthStart.setHours(0, 0, 0, 0);
         startDate = monthStart;
-        endDate = new Date();
+        endDate = new Date(now);
         break;
       case 'quarter':
         const quarterStart = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+        quarterStart.setHours(0, 0, 0, 0);
         startDate = quarterStart;
-        endDate = new Date();
+        endDate = new Date(now);
         break;
       case 'year':
         const yearStart = new Date(now.getFullYear(), 0, 1);
+        yearStart.setHours(0, 0, 0, 0);
         startDate = yearStart;
-        endDate = new Date();
+        endDate = new Date(now);
         break;
       case 'custom':
         if (customStartDate && customEndDate) {
           startDate = new Date(customStartDate);
+          startDate.setHours(0, 0, 0, 0);
           endDate = new Date(customEndDate);
+          endDate.setHours(23, 59, 59, 999);
         }
         break;
     }
@@ -234,7 +242,10 @@ function ReportsContent() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
-      if (!response.ok) throw new Error('Failed to fetch report data');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch report data');
+      }
 
       const data: ReportData = await response.json();
       setReportData(data);
@@ -247,6 +258,11 @@ function ReportsContent() {
   };
 
   const handleExport = async () => {
+    if (!reportData) {
+      alert('No data to export. Please wait for the report to load.');
+      return;
+    }
+    
     setExporting(true);
     try {
       const user = auth?.currentUser;
@@ -254,6 +270,8 @@ function ReportsContent() {
       
       const token = await user.getIdToken();
       const { startDate, endDate } = getDateRangeParams();
+
+      console.log('Exporting report:', { format: exportFormat, type: reportType });
 
       const response = await fetch('/api/admin/reports/export', {
         method: 'POST',
@@ -264,28 +282,44 @@ function ReportsContent() {
         body: JSON.stringify({
           format: exportFormat,
           data: reportData,
-          dateRange: { start: startDate, end: endDate },
+          dateRange: { 
+            start: startDate?.toISOString() || null, 
+            end: endDate?.toISOString() || null 
+          },
           type: reportType
         })
       });
 
-      if (!response.ok) throw new Error('Export failed');
+      if (!response.ok) {
+        let errorMessage = 'Export failed';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch {
+          errorMessage = `Export failed: ${response.status}`;
+        }
+        throw new Error(errorMessage);
+      }
 
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `report-${dateRange}-${new Date().toISOString().split('T')[0]}.${exportFormat}`;
+      a.download = `report-${reportType}-${dateRange}-${new Date().toISOString().split('T')[0]}.${exportFormat}`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (err) {
       console.error('Export error:', err);
-      alert('Failed to export report');
+      alert(err instanceof Error ? err.message : 'Failed to export report');
     } finally {
       setExporting(false);
     }
+  };
+
+  const handlePrint = () => {
+    window.print();
   };
 
   const formatCurrency = (amount: number = 0) => {
@@ -393,7 +427,7 @@ function ReportsContent() {
                 Export
               </button>
               <button
-                onClick={() => window.print()}
+                onClick={handlePrint}
                 className="px-3 sm:px-4 py-2 bg-slate-800 border border-blue-500/20 rounded-xl text-gray-300 hover:bg-slate-700 transition flex items-center gap-2 text-sm"
               >
                 <Printer className="w-4 h-4" />
@@ -583,7 +617,7 @@ function ReportsContent() {
                   </tr>
               </thead>
               <tbody className="divide-y divide-blue-500/10">
-                {reportData.incomeByVehicle.slice(0, viewMode === 'summary' ? 5 : undefined).map((vehicle) => (
+                {(viewMode === 'summary' ? reportData.incomeByVehicle.slice(0, 5) : reportData.incomeByVehicle).map((vehicle) => (
                   <tr key={vehicle.vehicleId} className="hover:bg-blue-500/5 transition">
                     <td className="p-3">
                       <div>
@@ -677,7 +711,7 @@ function ReportsContent() {
               Top Performing Drivers
             </h3>
             <div className="space-y-3">
-              {reportData.incomeByDriver.slice(0, 5).map((driver) => (
+              {(viewMode === 'summary' ? reportData.incomeByDriver.slice(0, 5) : reportData.incomeByDriver).map((driver) => (
                 <div key={driver.driverId} className="flex items-center justify-between p-2 bg-slate-700/30 rounded-lg">
                   <div>
                     <p className="font-medium text-sm">{driver.name}</p>
