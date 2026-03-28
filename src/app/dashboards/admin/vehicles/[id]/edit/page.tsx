@@ -1,7 +1,7 @@
 // app/dashboards/admin/vehicles/[id]/edit/page.tsx
 "use client";
 
-import { useState, useEffect, useRef, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -33,6 +33,10 @@ import {
 // Firebase will be dynamically imported on client side only
 let auth: any = null;
 let onAuthStateChanged: any = null;
+
+// Constants
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+const VALID_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
 
 interface VehicleImage {
   id: string;
@@ -114,7 +118,7 @@ function EditVehicleContent() {
     driverId: ''
   });
 
-  // Load Firebase dynamically on client side only
+  // Load Firebase dynamically
   useEffect(() => {
     const loadFirebase = async () => {
       try {
@@ -155,7 +159,7 @@ function EditVehicleContent() {
     };
   }, [imagePreviews]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -184,6 +188,17 @@ function EditVehicleContent() {
       }
       
       const vehicleData = await vehicleResponse.json();
+      
+      // Fetch vehicle images
+      const imagesResponse = await fetch(`/api/upload?entityType=vehicle&entityId=${vehicleId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (imagesResponse.ok) {
+        const imagesData = await imagesResponse.json();
+        vehicleData.images = imagesData.images || [];
+      }
+      
       setVehicle(vehicleData);
       setFormData({
         plateNumber: vehicleData.plateNumber || '',
@@ -212,9 +227,9 @@ function EditVehicleContent() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [vehicleId, router]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
@@ -260,25 +275,29 @@ function EditVehicleContent() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [vehicleId, formData, router, loadData]);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     
-    // Validate file sizes and types
-    const validFiles = files.filter(file => {
-      const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
-      if (!validTypes.includes(file.type)) {
-        setError(`${file.name} is not a valid image type. Please upload JPEG, PNG, or WebP.`);
-        return false;
+    const validFiles: File[] = [];
+    const errors: string[] = [];
+    
+    files.forEach(file => {
+      if (!VALID_IMAGE_TYPES.includes(file.type)) {
+        errors.push(`${file.name} is not a valid image type. Please upload JPEG, PNG, or WebP.`);
+      } else if (file.size > MAX_IMAGE_SIZE) {
+        errors.push(`${file.name} exceeds 5MB limit.`);
+      } else {
+        validFiles.push(file);
       }
-      if (file.size > 5 * 1024 * 1024) {
-        setError(`${file.name} exceeds 5MB limit.`);
-        return false;
-      }
-      return true;
     });
+    
+    if (errors.length > 0) {
+      setError(errors[0]);
+      setTimeout(() => setError(null), 3000);
+    }
     
     if (validFiles.length === 0) return;
     
@@ -287,53 +306,64 @@ function EditVehicleContent() {
     // Create preview URLs
     const newPreviews = validFiles.map(file => URL.createObjectURL(file));
     setImagePreviews(prev => [...prev, ...newPreviews]);
-  };
+  }, []);
 
-  const handleUploadImages = async () => {
+  const uploadImageToAPI = useCallback(async (file: File, isMain: boolean = false): Promise<any> => {
+    const user = auth?.currentUser;
+    if (!user) throw new Error('Not authenticated');
+    
+    const token = await user.getIdToken();
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('imageType', isMain ? 'main' : 'gallery');
+    formData.append('entityType', 'vehicle');
+    formData.append('entityId', vehicleId);
+    
+    // If it's the first image or explicitly set as main, set as primary
+    if (isMain || !vehicle?.images?.length) {
+      formData.append('setPrimary', 'true');
+    }
+
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to upload image');
+    }
+
+    return response.json();
+  }, [vehicleId, vehicle?.images]);
+
+  const handleUploadImages = useCallback(async () => {
     if (selectedFiles.length === 0) return;
     
     setUploading(true);
     setError(null);
     
     try {
-      const user = auth?.currentUser;
-      if (!user) {
-        router.push('/auth/login');
-        return;
-      }
+      const hasExistingImages = vehicle?.images && vehicle.images.length > 0;
       
-      const token = await user.getIdToken();
-      const formData = new FormData();
+      // Upload all images in parallel
+      const uploadPromises = selectedFiles.map((file, index) => 
+        uploadImageToAPI(file, !hasExistingImages && index === 0)
+      );
       
-      selectedFiles.forEach(file => {
-        formData.append('images', file);
-      });
+      await Promise.all(uploadPromises);
       
-      // Set first image as primary if no primary exists
-      const hasPrimary = vehicle?.images?.some(img => img.isPrimary);
-      if (!hasPrimary) {
-        formData.append('setPrimary', 'true');
-      }
-      
-      const response = await fetch(`/api/admin/vehicles/${vehicleId}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-        body: formData
-      });
-      
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to upload images');
-      }
-      
-      setSuccess('Images uploaded successfully!');
+      setSuccess(`${selectedFiles.length} image(s) uploaded successfully!`);
       setSelectedFiles([]);
       setImagePreviews([]);
       
       // Reload vehicle data to show new images
       await loadData();
+      
+      setTimeout(() => setSuccess(null), 3000);
       
     } catch (error: any) {
       console.error('Error uploading images:', error);
@@ -341,9 +371,9 @@ function EditVehicleContent() {
     } finally {
       setUploading(false);
     }
-  };
+  }, [selectedFiles, vehicle?.images, uploadImageToAPI, loadData]);
 
-  const handleDeleteImage = async (imageId: string) => {
+  const handleDeleteImage = useCallback(async (imageId: string) => {
     if (!confirm('Are you sure you want to delete this image?')) return;
     
     try {
@@ -355,7 +385,7 @@ function EditVehicleContent() {
       
       const token = await user.getIdToken();
       
-      const response = await fetch(`/api/admin/vehicles/${vehicleId}?imageId=${imageId}`, {
+      const response = await fetch(`/api/upload?imageId=${imageId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -370,47 +400,49 @@ function EditVehicleContent() {
       setSuccess('Image deleted successfully!');
       await loadData();
       
+      setTimeout(() => setSuccess(null), 3000);
+      
     } catch (error: any) {
       console.error('Error deleting image:', error);
       setError(error.message || 'Failed to delete image');
     }
-  };
+  }, [router, loadData]);
 
-  const handleSetPrimary = async (imageId: string) => {
+  const handleSetPrimary = useCallback(async (imageId: string) => {
     try {
       const user = auth?.currentUser;
       if (!user) return;
       
       const token = await user.getIdToken();
       
-      // Update the images array to set this as primary
-      const updatedImages = vehicle?.images?.map(img => ({
-        ...img,
-        isPrimary: img.id === imageId
-      }));
-      
-      const response = await fetch(`/api/admin/vehicles/${vehicleId}`, {
-        method: 'PUT',
+      const response = await fetch(`/api/upload?imageId=${imageId}&action=set-primary`, {
+        method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          ...formData,
-          images: updatedImages
-        }),
       });
       
-      if (!response.ok) throw new Error('Failed to set primary image');
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to set primary image');
+      }
       
       setSuccess('Primary image updated!');
       await loadData();
+      
+      setTimeout(() => setSuccess(null), 3000);
       
     } catch (error: any) {
       console.error('Error setting primary image:', error);
       setError(error.message || 'Failed to set primary image');
     }
-  };
+  }, [loadData]);
+
+  const removeSelectedFile = useCallback((index: number) => {
+    URL.revokeObjectURL(imagePreviews[index]);
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
+  }, [imagePreviews]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -427,18 +459,12 @@ function EditVehicleContent() {
     }
   };
 
-  const removeSelectedFile = (index: number) => {
-    URL.revokeObjectURL(imagePreviews[index]);
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-    setImagePreviews(prev => prev.filter((_, i) => i !== index));
-  };
-
   // Show loading while Firebase initializes
   if (!firebaseReady) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <Loader2 className="w-12 h-12 text-yellow-400 animate-spin mx-auto mb-4" />
           <p className="text-gray-400">Loading...</p>
         </div>
       </div>
@@ -450,7 +476,7 @@ function EditVehicleContent() {
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
           <div className="relative">
-            <div className="w-20 h-20 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+            <Loader2 className="w-20 h-20 text-yellow-400 animate-spin mx-auto mb-4" />
             <Truck className="w-8 h-8 text-yellow-400 absolute top-6 left-1/2 -translate-x-1/2 animate-pulse" />
           </div>
           <p className="text-gray-400 mt-4">Loading vehicle details...</p>
@@ -484,8 +510,8 @@ function EditVehicleContent() {
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
       {/* Animated Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-10 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000"></div>
+        <div className="absolute top-20 left-10 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse will-change-transform"></div>
+        <div className="absolute bottom-20 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000 will-change-transform"></div>
       </div>
 
       {/* Header */}
@@ -527,7 +553,7 @@ function EditVehicleContent() {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {/* Alerts */}
         {error && (
-          <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center justify-between">
+          <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center justify-between animate-shake">
             <div className="flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 text-rose-400" />
               <span className="text-sm text-rose-300">{error}</span>
@@ -539,7 +565,7 @@ function EditVehicleContent() {
         )}
         
         {success && (
-          <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl flex items-center justify-between">
+          <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl flex items-center justify-between animate-fadeIn">
             <div className="flex items-center gap-3">
               <CheckCircle className="w-5 h-5 text-green-400" />
               <span className="text-sm text-green-300">{success}</span>
@@ -560,16 +586,16 @@ function EditVehicleContent() {
           {/* Existing Images */}
           {vehicle?.images && vehicle.images.length > 0 && (
             <div className="mb-6">
-              <p className="text-sm text-gray-400 mb-3">Current Images</p>
+              <p className="text-sm text-gray-400 mb-3">Current Images ({vehicle.images.length})</p>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                 {vehicle.images.map((image) => (
                   <div key={image.id} className="relative group">
                     <div className="relative aspect-square bg-slate-900 rounded-lg overflow-hidden border border-yellow-500/20">
-                      <Image
+                      <img
                         src={image.url}
                         alt={vehicle.plateNumber}
-                        fill
-                        className="object-cover"
+                        className="w-full h-full object-cover"
+                        loading="lazy"
                       />
                       {image.isPrimary && (
                         <div className="absolute top-2 left-2 bg-yellow-400 text-black text-xs px-2 py-0.5 rounded-full flex items-center gap-1">
@@ -630,11 +656,10 @@ function EditVehicleContent() {
                   {imagePreviews.map((preview, index) => (
                     <div key={index} className="relative group">
                       <div className="relative aspect-square bg-slate-900 rounded-lg overflow-hidden border border-yellow-500/20">
-                        <Image
+                        <img
                           src={preview}
                           alt={`Preview ${index + 1}`}
-                          fill
-                          className="object-cover"
+                          className="w-full h-full object-cover"
                         />
                       </div>
                       <button
@@ -877,11 +902,23 @@ function EditVehicleContent() {
 
       <style jsx>{`
         @keyframes pulse {
-          0%, 100% { opacity: 0.5; }
-          50% { opacity: 1; }
+          0%, 100% { opacity: 0.5; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.05); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          10%, 30%, 50%, 70%, 90% { transform: translateX(-2px); }
+          20%, 40%, 60%, 80% { transform: translateX(2px); }
         }
         .animate-pulse { animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
+        .animate-shake { animation: shake 0.5s ease-in-out; }
         .animation-delay-2000 { animation-delay: 2s; }
+        .will-change-transform { will-change: transform, opacity; }
       `}</style>
     </div>
   );
@@ -891,8 +928,8 @@ function EditVehicleFallback() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
       <div className="text-center">
-        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
-        <p className="text-gray-400">Loading...</p>
+        <Loader2 className="w-12 h-12 text-yellow-400 animate-spin mx-auto mb-4" />
+        <p className="text-gray-400">Loading vehicle details...</p>
       </div>
     </div>
   );

@@ -1,7 +1,6 @@
-// src/app/dashboards/admin/drivers/[id]/page.tsx
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, Suspense, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as React from 'react';
@@ -38,14 +37,20 @@ import {
   Check,
   ChevronDown,
   Users,
-  Search
+  Search,
+  Camera,
+  Upload
 } from "lucide-react";
 
 // Firebase will be dynamically imported on client side only
 let auth: any = null;
 let onAuthStateChanged: any = null;
 
-// Updated types to match API response
+// Constants
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+const VALID_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+
+// Types
 interface DriverDetailsResponse {
   success: boolean;
   driver: {
@@ -109,6 +114,7 @@ function DriverDetailContent({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
   const [driverData, setDriverData] = useState<DriverDetailsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [availableVehicles, setAvailableVehicles] = useState<VehicleOption[]>([]);
@@ -117,13 +123,20 @@ function DriverDetailContent({ id }: { id: string }) {
   const [saving, setSaving] = useState(false);
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+  
+  // Photo upload states
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Editable fields state
   const [editablePhone, setEditablePhone] = useState('');
   const [editableLicense, setEditableLicense] = useState('');
   const [editableStatus, setEditableStatus] = useState('');
 
-  // Load Firebase dynamically on client side only
+  // Load Firebase dynamically
   useEffect(() => {
     const loadFirebase = async () => {
       try {
@@ -164,6 +177,15 @@ function DriverDetailContent({ id }: { id: string }) {
     return () => unsubscribe();
   }, [id, firebaseReady]);
 
+  // Cleanup preview URL
+  useEffect(() => {
+    return () => {
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [imagePreview]);
+
   const loadDriver = async () => {
     setLoading(true);
     setError(null);
@@ -194,6 +216,24 @@ function DriverDetailContent({ id }: { id: string }) {
       }
       
       const data = await response.json();
+      
+      // Fetch driver avatar if not already in response
+      if (!data.driver.avatar) {
+        try {
+          const imagesResponse = await fetch(`/api/upload?entityType=driver&entityId=${id}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (imagesResponse.ok) {
+            const imagesData = await imagesResponse.json();
+            if (imagesData.images && imagesData.images.length > 0) {
+              data.driver.avatar = imagesData.images[0]?.url;
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching driver avatar:', error);
+        }
+      }
+      
       setDriverData(data);
       setEditablePhone(data.driver?.phone || '');
       setEditableLicense(data.driver?.licenseNumber || '');
@@ -261,12 +301,8 @@ function DriverDetailContent({ id }: { id: string }) {
       }
       
       setEditingField(null);
-      // Show success message briefly
-      const successMsg = document.createElement('div');
-      successMsg.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-slideDown';
-      successMsg.textContent = `${field} updated successfully!`;
-      document.body.appendChild(successMsg);
-      setTimeout(() => successMsg.remove(), 3000);
+      setSuccess(`${field} updated successfully!`);
+      setTimeout(() => setSuccess(null), 3000);
       
     } catch (error) {
       console.error('Error updating field:', error);
@@ -275,6 +311,130 @@ function DriverDetailContent({ id }: { id: string }) {
       setSaving(false);
     }
   };
+
+  const handleUploadPhoto = useCallback(async () => {
+    if (!selectedFile || !driverData) return;
+    
+    setUploadingPhoto(true);
+    setError(null);
+    
+    try {
+      const user = auth?.currentUser;
+      const token = await user?.getIdToken();
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('imageType', 'avatar');
+      formData.append('entityType', 'driver');
+      formData.append('entityId', driverData.driver.id);
+      
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to upload photo');
+      }
+      
+      const data = await response.json();
+      
+      setSuccess(`Photo uploaded successfully!`);
+      setShowPhotoModal(false);
+      setSelectedFile(null);
+      setImagePreview(null);
+      
+      // Update driver data with new avatar
+      setDriverData({
+        ...driverData,
+        driver: {
+          ...driverData.driver,
+          avatar: data.image?.url || imagePreview
+        }
+      });
+      
+      setTimeout(() => setSuccess(null), 3000);
+      
+    } catch (error: any) {
+      console.error('Error uploading photo:', error);
+      setError(error.message || 'Failed to upload photo');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }, [selectedFile, driverData, imagePreview]);
+
+  const handleDeletePhoto = useCallback(async () => {
+    if (!driverData) return;
+    if (!confirm('Are you sure you want to remove this driver\'s photo?')) return;
+    
+    setUploadingPhoto(true);
+    
+    try {
+      const user = auth?.currentUser;
+      const token = await user?.getIdToken();
+      
+      const response = await fetch(`/api/upload?entityType=driver&entityId=${driverData.driver.id}&type=avatar`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete photo');
+      }
+      
+      setSuccess(`Photo removed successfully!`);
+      
+      // Update driver data to remove avatar
+      setDriverData({
+        ...driverData,
+        driver: {
+          ...driverData.driver,
+          avatar: null
+        }
+      });
+      
+      setTimeout(() => setSuccess(null), 3000);
+      
+    } catch (error: any) {
+      console.error('Error deleting photo:', error);
+      setError(error.message || 'Failed to delete photo');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }, [driverData]);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    // Validate file
+    if (!VALID_IMAGE_TYPES.includes(file.type)) {
+      setError('Invalid file type. Please upload JPEG, PNG, or WebP.');
+      return;
+    }
+    if (file.size > MAX_IMAGE_SIZE) {
+      setError(`File too large. Maximum size is ${MAX_IMAGE_SIZE / 1024 / 1024}MB.`);
+      return;
+    }
+    
+    setSelectedFile(file);
+    const preview = URL.createObjectURL(file);
+    setImagePreview(preview);
+    setError(null);
+  }, []);
+
+  const handleOpenPhotoModal = useCallback(() => {
+    setSelectedFile(null);
+    setImagePreview(null);
+    setShowPhotoModal(true);
+    setError(null);
+  }, []);
 
   const handleAssignVehicle = async (vehicleId: string | null) => {
     setSaving(true);
@@ -297,12 +457,8 @@ function DriverDetailContent({ id }: { id: string }) {
       
       await loadDriver();
       setShowVehicleModal(false);
-      
-      const successMsg = document.createElement('div');
-      successMsg.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-slideDown';
-      successMsg.textContent = vehicleId ? 'Vehicle assigned successfully!' : 'Vehicle unassigned successfully!';
-      document.body.appendChild(successMsg);
-      setTimeout(() => successMsg.remove(), 3000);
+      setSuccess(vehicleId ? 'Vehicle assigned successfully!' : 'Vehicle unassigned successfully!');
+      setTimeout(() => setSuccess(null), 3000);
       
     } catch (error) {
       console.error('Error assigning vehicle:', error);
@@ -412,7 +568,7 @@ function DriverDetailContent({ id }: { id: string }) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <Loader2 className="w-12 h-12 text-yellow-400 animate-spin mx-auto mb-4" />
           <p className="text-gray-400">Loading...</p>
         </div>
       </div>
@@ -424,7 +580,7 @@ function DriverDetailContent({ id }: { id: string }) {
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
           <div className="relative">
-            <div className="w-20 h-20 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+            <Loader2 className="w-20 h-20 text-yellow-400 animate-spin mx-auto mb-4" />
             <UserCircle className="w-8 h-8 text-yellow-400 absolute top-6 left-1/2 -translate-x-1/2 animate-pulse" />
           </div>
           <p className="text-gray-400">Loading driver details...</p>
@@ -454,18 +610,43 @@ function DriverDetailContent({ id }: { id: string }) {
     );
   }
 
-  const { driver, vehicle, stats, recentActivity, performance, monthlyPerformance } = driverData;
-  const latestPerformance = performance && performance.length > 0 ? performance[0] : { tripsCount: 0, totalIncome: 0, rating: 0 };
+  const { driver, vehicle, stats, recentActivity, monthlyPerformance } = driverData;
+  const latestPerformance = driverData.performance && driverData.performance.length > 0 ? driverData.performance[0] : { tripsCount: 0, totalIncome: 0, rating: 0 };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white">
       {/* Animated Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-10 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000"></div>
+        <div className="absolute top-20 left-10 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse will-change-transform"></div>
+        <div className="absolute bottom-20 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000 will-change-transform"></div>
       </div>
 
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        {/* Alerts */}
+        {error && (
+          <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center justify-between animate-shake">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-rose-400" />
+              <span className="text-sm text-rose-300">{error}</span>
+            </div>
+            <button onClick={() => setError(null)} className="text-rose-400 hover:text-rose-300">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        
+        {success && (
+          <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl flex items-center justify-between animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <CheckCircle className="w-5 h-5 text-green-400" />
+              <span className="text-sm text-green-300">{success}</span>
+            </div>
+            <button onClick={() => setSuccess(null)} className="text-green-400 hover:text-green-300">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* Header */}
         <div className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-xl border border-yellow-500/20 rounded-2xl mb-6 p-4 sm:p-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -518,14 +699,29 @@ function DriverDetailContent({ id }: { id: string }) {
             {/* Profile Card */}
             <div className="bg-slate-800/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl p-6">
               <div className="flex flex-col items-center text-center mb-6">
-                <div className="w-24 h-24 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center mb-4">
-                  {driver.avatar ? (
-                    <img src={driver.avatar} alt={driver.name} className="w-full h-full rounded-full object-cover" />
-                  ) : (
-                    <UserCircle className="w-16 h-16 text-black" />
-                  )}
+                <div className="relative group">
+                  <div className="w-24 h-24 rounded-full bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center overflow-hidden">
+                    {driver.avatar ? (
+                      <img 
+                        src={driver.avatar} 
+                        alt={driver.name} 
+                        className="w-full h-full rounded-full object-cover"
+                      />
+                    ) : (
+                      <UserCircle className="w-16 h-16 text-black" />
+                    )}
+                  </div>
+                  
+                  {/* Camera button for photo upload */}
+                  <button
+                    onClick={handleOpenPhotoModal}
+                    className="absolute -bottom-2 -right-2 p-2 bg-black/70 rounded-full hover:bg-yellow-500 transition backdrop-blur-sm"
+                    title="Upload Photo"
+                  >
+                    <Camera className="w-4 h-4 text-white" />
+                  </button>
                 </div>
-                <h2 className="text-xl font-bold">{driver.name}</h2>
+                <h2 className="text-xl font-bold mt-3">{driver.name}</h2>
                 <p className="text-sm text-gray-400 mb-3">{driver.email}</p>
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <Calendar className="w-4 h-4" />
@@ -735,7 +931,7 @@ function DriverDetailContent({ id }: { id: string }) {
             </div>
           </div>
 
-          {/* Middle & Right Columns - Vehicle & Recent Activity */}
+          {/* Middle & Right Columns */}
           <div className="lg:col-span-2 space-y-6">
             {/* Assigned Vehicle */}
             {vehicle ? (
@@ -881,6 +1077,132 @@ function DriverDetailContent({ id }: { id: string }) {
         </div>
       </div>
 
+      {/* Photo Upload Modal */}
+      {showPhotoModal && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-gradient-to-b from-slate-900 to-slate-950 rounded-2xl border border-yellow-500/20 max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-lg flex items-center justify-center">
+                  <Camera className="w-5 h-5 text-black" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-white">Upload Driver Photo</h2>
+                  <p className="text-xs text-gray-400">{driver.name}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowPhotoModal(false);
+                  setSelectedFile(null);
+                  setImagePreview(null);
+                  setError(null);
+                }}
+                className="p-1 hover:bg-slate-800 rounded-lg transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Current Photo */}
+            {driver.avatar && (
+              <div className="mb-4">
+                <p className="text-sm text-gray-400 mb-2">Current Photo</p>
+                <div className="relative w-24 h-24 mx-auto">
+                  <div className="w-24 h-24 rounded-full bg-slate-800 border-2 border-yellow-500/30 overflow-hidden">
+                    <img
+                      src={driver.avatar}
+                      alt={driver.name}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <button
+                    onClick={handleDeletePhoto}
+                    disabled={uploadingPhoto}
+                    className="absolute -top-2 -right-2 p-1.5 bg-rose-500/90 rounded-full hover:bg-rose-500 transition"
+                    title="Remove photo"
+                  >
+                    <Trash2 className="w-3 h-3 text-white" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Upload New Photo */}
+            <div 
+              className="border-2 border-dashed border-yellow-500/20 rounded-xl p-6 text-center hover:border-yellow-400/50 transition cursor-pointer"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              {imagePreview ? (
+                <div className="relative">
+                  <div className="relative w-32 h-32 mx-auto rounded-full overflow-hidden bg-slate-800">
+                    <img
+                      src={imagePreview}
+                      alt="Preview"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedFile(null);
+                      setImagePreview(null);
+                      if (fileInputRef.current) fileInputRef.current.value = '';
+                    }}
+                    className="absolute top-0 right-0 p-1 bg-rose-500/80 rounded-full hover:bg-rose-500 transition"
+                  >
+                    <X className="w-3 h-3 text-white" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <Upload className="w-10 h-10 text-yellow-400/50 mx-auto mb-3" />
+                  <p className="text-sm text-gray-400">Click to upload photo</p>
+                  <p className="text-xs text-gray-500 mt-1">JPEG, PNG, WebP up to 5MB</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowPhotoModal(false);
+                  setSelectedFile(null);
+                  setImagePreview(null);
+                }}
+                className="flex-1 px-4 py-2 border border-gray-700 rounded-xl text-gray-300 font-medium hover:bg-gray-800 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUploadPhoto}
+                disabled={uploadingPhoto || !selectedFile}
+                className="flex-1 px-4 py-2 bg-gradient-to-r from-yellow-400 to-amber-500 text-black rounded-xl font-medium hover:from-yellow-300 hover:to-amber-400 transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {uploadingPhoto ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" />
+                    Upload Photo
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Vehicle Assignment Modal */}
       {showVehicleModal && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
@@ -981,22 +1303,17 @@ function DriverDetailContent({ id }: { id: string }) {
 
       <style jsx>{`
         @keyframes pulse {
-          0%, 100% { opacity: 0.5; }
-          50% { opacity: 1; }
+          0%, 100% { opacity: 0.5; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.05); }
         }
         @keyframes fadeIn {
           from { opacity: 0; }
           to { opacity: 1; }
         }
-        @keyframes slideDown {
-          from {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          10%, 30%, 50%, 70%, 90% { transform: translateX(-2px); }
+          20%, 40%, 60%, 80% { transform: translateX(2px); }
         }
         .animate-pulse {
           animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
@@ -1004,11 +1321,14 @@ function DriverDetailContent({ id }: { id: string }) {
         .animate-fadeIn {
           animation: fadeIn 0.2s ease-out;
         }
-        .animate-slideDown {
-          animation: slideDown 0.3s ease-out;
+        .animate-shake {
+          animation: shake 0.5s ease-in-out;
         }
         .animation-delay-2000 {
           animation-delay: 2s;
+        }
+        .will-change-transform {
+          will-change: transform, opacity;
         }
       `}</style>
     </div>
@@ -1019,8 +1339,8 @@ function DriverDetailFallback() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
       <div className="text-center">
-        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
-        <p className="text-gray-400">Loading...</p>
+        <Loader2 className="w-12 h-12 text-yellow-400 animate-spin mx-auto mb-4" />
+        <p className="text-gray-400">Loading driver details...</p>
       </div>
     </div>
   );

@@ -1,9 +1,10 @@
+// app/dashboards/admin/vehicles/add-vehicle/page.tsx
+
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, Suspense, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import {
   ArrowLeft,
   Car,
@@ -13,31 +14,20 @@ import {
   Calendar,
   Shield,
   Wrench,
-  Fuel,
   Gauge,
   Palette,
   Hash,
   FileText,
   Camera,
   CheckCircle,
-  AlertCircle,
+  AlertTriangle,
   Loader2,
-  Navigation2,
   Radio,
   Truck,
   CreditCard,
   DollarSign,
-  CalendarDays,
-  IdCard,
-  Info,
-  Check,
-  AlertTriangle,
-  Image as ImageIcon,
   Trash2,
   Save,
-  Eye,
-  ChevronRight,
-  ChevronLeft,
 } from "lucide-react";
 
 // Firebase will be dynamically imported on client side only
@@ -105,6 +95,11 @@ const sections = [
   { id: 'images', name: 'Images', icon: Camera, description: 'Vehicle photos' },
 ];
 
+// Constants
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_ADDITIONAL_IMAGES = 10;
+const VALID_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+
 function AddVehicleContent() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -115,15 +110,18 @@ function AddVehicleContent() {
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [formProgress, setFormProgress] = useState(0);
   const [user, setUser] = useState<any>(null);
-  const [createdVehicleId, setCreatedVehicleId] = useState<string | null>(null);
   
-  // Images state - store files before upload
+  // Images state
   const [mainImageFile, setMainImageFile] = useState<File | null>(null);
   const [mainImagePreview, setMainImagePreview] = useState<string | null>(null);
   const [additionalImageFiles, setAdditionalImageFiles] = useState<File[]>([]);
   const [additionalImagePreviews, setAdditionalImagePreviews] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
+  
+  // Refs
+  const mainImageInputRef = useRef<HTMLInputElement>(null);
+  const additionalImagesInputRef = useRef<HTMLInputElement>(null);
   
   const [formData, setFormData] = useState<FormData>({
     regNumber: '',
@@ -168,7 +166,7 @@ function AddVehicleContent() {
     notes: ''
   });
 
-  // Load Firebase dynamically on client side only
+  // Load Firebase dynamically
   useEffect(() => {
     const loadFirebase = async () => {
       try {
@@ -203,7 +201,7 @@ function AddVehicleContent() {
     return () => unsubscribe();
   }, [firebaseReady, router]);
 
-  // Calculate next service dates based on last service
+  // Calculate next service dates
   useEffect(() => {
     if (formData.lastServiceDate && formData.serviceIntervalMonths) {
       const lastDate = new Date(formData.lastServiceDate);
@@ -218,7 +216,7 @@ function AddVehicleContent() {
     if (formData.lastServiceOdometer && formData.serviceIntervalKm) {
       setFormData(prev => ({
         ...prev,
-        nextServiceOdometer: (prev.lastServiceOdometer || 0) + (prev.serviceIntervalKm || 0)
+        nextServiceOdometer: prev.lastServiceOdometer + prev.serviceIntervalKm
       }));
     }
   }, [formData.lastServiceDate, formData.lastServiceOdometer, formData.serviceIntervalKm, formData.serviceIntervalMonths]);
@@ -226,28 +224,17 @@ function AddVehicleContent() {
   // Calculate form progress
   useEffect(() => {
     let completed = 0;
-    let total = 0;
+    const total = sections.length;
     
-    sections.forEach(section => {
-      total++;
-      if (section.id === 'basic' && formData.regNumber && formData.make && formData.model) {
-        completed++;
-      } else if (section.id === 'insurance' && formData.insuranceExpiry) {
-        completed++;
-      } else if (section.id === 'images' && mainImageFile) {
-        completed++;
-      } else if (section.id === 'service' && (formData.lastServiceDate || formData.currentOdometer)) {
-        completed++;
-      } else if (section.id === 'specs' && (formData.fuelType || formData.transmission)) {
-        completed++;
-      } else if (section.id === 'financial' && (formData.purchasePrice || formData.dailyTarget)) {
-        completed++;
-      }
-    });
+    if (formData.regNumber && formData.make && formData.model) completed++;
+    if (formData.insuranceExpiry) completed++;
+    if (mainImageFile) completed++;
+    if (formData.lastServiceDate || formData.currentOdometer) completed++;
+    if (formData.fuelType || formData.transmission) completed++;
+    if (formData.purchasePrice || formData.dailyTarget) completed++;
     
     setFormProgress((completed / total) * 100);
     
-    // Mark sections as completed
     const newCompleted = new Set(completedSections);
     if (formData.regNumber && formData.make && formData.model) newCompleted.add('basic');
     if (formData.insuranceExpiry) newCompleted.add('insurance');
@@ -258,80 +245,91 @@ function AddVehicleContent() {
     setCompletedSections(newCompleted);
   }, [formData, mainImageFile]);
 
-  // Convert file to base64 for preview
   const fileToPreview = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
+      reader.onerror = (error) => reject(error);
     });
   };
 
-  // Handle main image upload
-  const handleMainImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        setError('Image size should be less than 5MB');
-        return;
-      }
-      
-      if (!file.type.startsWith('image/')) {
-        setError('Please upload an image file');
-        return;
-      }
-      
-      try {
-        const preview = await fileToPreview(file);
-        setMainImageFile(file);
-        setMainImagePreview(preview);
-      } catch (err) {
-        setError('Failed to process image');
-      }
+  const validateImage = (file: File): { valid: boolean; error?: string } => {
+    if (!VALID_IMAGE_TYPES.includes(file.type)) {
+      return { valid: false, error: 'Invalid file type. Only JPEG, PNG, and WebP images are allowed.' };
     }
+    if (file.size > MAX_IMAGE_SIZE) {
+      return { valid: false, error: `File too large. Maximum size is ${MAX_IMAGE_SIZE / 1024 / 1024}MB.` };
+    }
+    return { valid: true };
   };
 
-  // Handle additional images
-  const handleAdditionalImagesChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+  const handleMainImageChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
     
-    if (additionalImageFiles.length + files.length > 10) {
-      setError('Maximum 10 additional images allowed');
+    const validation = validateImage(file);
+    if (!validation.valid) {
+      setError(validation.error || 'Invalid image');
       return;
     }
     
+    try {
+      const preview = await fileToPreview(file);
+      setMainImageFile(file);
+      setMainImagePreview(preview);
+      setError(null);
+    } catch (err) {
+      setError('Failed to process image');
+    }
+  }, []);
+
+  const handleAdditionalImagesChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    
+    if (additionalImageFiles.length + files.length > MAX_ADDITIONAL_IMAGES) {
+      setError(`Maximum ${MAX_ADDITIONAL_IMAGES} additional images allowed`);
+      return;
+    }
+    
+    const validFiles: File[] = [];
+    const errors: string[] = [];
+    
     for (const file of files) {
-      if (file.size > 5 * 1024 * 1024) {
-        setError('Each image should be less than 5MB');
-        return;
-      }
-      if (!file.type.startsWith('image/')) {
-        setError('Please upload only image files');
-        return;
+      const validation = validateImage(file);
+      if (validation.valid) {
+        validFiles.push(file);
+      } else if (validation.error) {
+        errors.push(validation.error);
       }
     }
     
+    if (errors.length > 0) {
+      setError(errors[0]);
+      return;
+    }
+    
     try {
-      const previews = await Promise.all(files.map(fileToPreview));
-      setAdditionalImageFiles(prev => [...prev, ...files]);
+      const previews = await Promise.all(validFiles.map(fileToPreview));
+      setAdditionalImageFiles(prev => [...prev, ...validFiles]);
       setAdditionalImagePreviews(prev => [...prev, ...previews]);
+      setError(null);
     } catch (err) {
       setError('Failed to process images');
     }
-  };
+  }, [additionalImageFiles.length]);
 
-  const handleDragOver = (e: React.DragEvent) => {
+  const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
-  };
+  }, []);
 
-  const handleDragLeave = (e: React.DragEvent) => {
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-  };
+  }, []);
 
-  const handleDrop = async (e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     
@@ -343,76 +341,92 @@ function AddVehicleContent() {
       return;
     }
     
-    if (additionalImageFiles.length + imageFiles.length > 10) {
-      setError('Maximum 10 additional images allowed');
+    if (additionalImageFiles.length + imageFiles.length > MAX_ADDITIONAL_IMAGES) {
+      setError(`Maximum ${MAX_ADDITIONAL_IMAGES} additional images allowed`);
+      return;
+    }
+    
+    const validFiles: File[] = [];
+    const errors: string[] = [];
+    
+    for (const file of imageFiles) {
+      const validation = validateImage(file);
+      if (validation.valid) {
+        validFiles.push(file);
+      } else if (validation.error) {
+        errors.push(validation.error);
+      }
+    }
+    
+    if (errors.length > 0) {
+      setError(errors[0]);
       return;
     }
     
     try {
-      const previews = await Promise.all(imageFiles.map(fileToPreview));
-      setAdditionalImageFiles(prev => [...prev, ...imageFiles]);
+      const previews = await Promise.all(validFiles.map(fileToPreview));
+      setAdditionalImageFiles(prev => [...prev, ...validFiles]);
       setAdditionalImagePreviews(prev => [...prev, ...previews]);
+      setError(null);
     } catch (err) {
       setError('Failed to process images');
     }
-  };
+  }, [additionalImageFiles.length]);
 
-  const removeAdditionalImage = (index: number) => {
+  const removeAdditionalImage = useCallback((index: number) => {
     setAdditionalImageFiles(prev => prev.filter((_, i) => i !== index));
     setAdditionalImagePreviews(prev => prev.filter((_, i) => i !== index));
-  };
+  }, []);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     setFormData(prev => ({
       ...prev,
       [name]: type === 'number' ? parseFloat(value) || 0 : value,
     }));
-    
     if (error) setError(null);
-  };
+  }, [error]);
 
-  const validateForm = (): boolean => {
+  const validateForm = useCallback((): boolean => {
     if (!formData.regNumber.trim()) {
       setError('Registration number is required');
       setActiveSection('basic');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
       return false;
     }
     if (!formData.make.trim()) {
       setError('Make is required');
       setActiveSection('basic');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
       return false;
     }
     if (!formData.model.trim()) {
       setError('Model is required');
       setActiveSection('basic');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
       return false;
     }
     if (!formData.insuranceExpiry) {
       setError('Insurance expiry date is required');
       setActiveSection('insurance');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
       return false;
     }
     if (!mainImageFile) {
       setError('Main vehicle image is required');
       setActiveSection('images');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
       return false;
     }
     return true;
-  };
+  }, [formData, mainImageFile]);
 
-  const uploadImageToAPI = async (file: File, vehicleId: string, imageType: 'main' | 'gallery'): Promise<any> => {
+  const uploadImageToAPI = useCallback(async (file: File, vehicleId: string, imageType: 'main' | 'gallery'): Promise<any> => {
     const token = await user.getIdToken();
     const formDataUpload = new FormData();
     formDataUpload.append('file', file);
     formDataUpload.append('imageType', imageType);
     formDataUpload.append('entityType', 'vehicle');
     formDataUpload.append('entityId', vehicleId);
+    
+    if (imageType === 'main') {
+      formDataUpload.append('setPrimary', 'true');
+    }
 
     const response = await fetch('/api/upload', {
       method: 'POST',
@@ -428,9 +442,9 @@ function AddVehicleContent() {
     }
 
     return response.json();
-  };
+  }, [user]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     
@@ -446,17 +460,50 @@ function AddVehicleContent() {
     try {
       const token = await user.getIdToken();
       
-      // First, create the vehicle without images
-      const vehicleData = {
-        ...formData,
-        regNumber: formData.regNumber.toUpperCase(),
+      // Create the vehicle - fixed duplicate property issue
+      const vehiclePayload = {
+        plateNumber: formData.regNumber.toUpperCase(),
+        model: `${formData.make} ${formData.model}`,
+        capacity: formData.seatingCapacity,
         status: 'ACTIVE',
-        insuranceExpiry: new Date(formData.insuranceExpiry).toISOString(),
+        driverId: null,
+        // Insurance details
+        insuranceProvider: formData.insuranceProvider,
+        insurancePolicyNo: formData.insurancePolicyNo,
+        insuranceExpiry: formData.insuranceExpiry ? new Date(formData.insuranceExpiry).toISOString() : null,
+        insuranceCoverType: formData.insuranceCoverType,
+        insurancePremium: formData.insurancePremium,
+        // License details
+        licenseNumber: formData.licenseNumber,
         licenseExpiry: formData.licenseExpiry ? new Date(formData.licenseExpiry).toISOString() : null,
         registrationDate: formData.registrationDate ? new Date(formData.registrationDate).toISOString() : null,
+        // Service details
         lastServiceDate: formData.lastServiceDate ? new Date(formData.lastServiceDate).toISOString() : null,
+        lastServiceOdometer: formData.lastServiceOdometer,
         nextServiceDate: formData.nextServiceDate ? new Date(formData.nextServiceDate).toISOString() : null,
+        nextServiceOdometer: formData.nextServiceOdometer,
+        serviceIntervalKm: formData.serviceIntervalKm,
+        serviceIntervalMonths: formData.serviceIntervalMonths,
+        // Odometer & Fuel
+        currentOdometer: formData.currentOdometer,
+        fuelType: formData.fuelType,
+        fuelTankCapacity: formData.fuelTankCapacity,
+        avgFuelConsumption: formData.avgFuelConsumption,
+        // Financial
         purchaseDate: formData.purchaseDate ? new Date(formData.purchaseDate).toISOString() : null,
+        purchasePrice: formData.purchasePrice,
+        dailyTarget: formData.dailyTarget,
+        monthlyTarget: formData.monthlyTarget,
+        // Technical specs
+        transmission: formData.transmission,
+        engineCapacity: formData.engineCapacity,
+        // Additional
+        notes: formData.notes,
+        // Other fields
+        color: formData.color,
+        chassisNumber: formData.chassisNumber,
+        engineNumber: formData.engineNumber,
+        year: formData.year,
       };
 
       const response = await fetch('/api/admin/vehicles', {
@@ -465,7 +512,7 @@ function AddVehicleContent() {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(vehicleData),
+        body: JSON.stringify(vehiclePayload),
       });
 
       if (!response.ok) {
@@ -475,9 +522,8 @@ function AddVehicleContent() {
 
       const createdVehicle = await response.json();
       const vehicleId = createdVehicle.id;
-      setCreatedVehicleId(vehicleId);
 
-      // Now upload images
+      // Upload images
       setUploadingImages(true);
       
       // Upload main image
@@ -485,12 +531,17 @@ function AddVehicleContent() {
         await uploadImageToAPI(mainImageFile, vehicleId, 'main');
       }
       
-      // Upload additional images
-      for (const image of additionalImageFiles) {
-        await uploadImageToAPI(image, vehicleId, 'gallery');
+      // Upload additional images in parallel
+      if (additionalImageFiles.length > 0) {
+        await Promise.all(
+          additionalImageFiles.map(file => uploadImageToAPI(file, vehicleId, 'gallery'))
+        );
       }
       
       setSuccess(true);
+      
+      // Clear cache for vehicles list
+      sessionStorage.removeItem('vehicles_1_all');
       
       // Auto redirect after 2 seconds
       setTimeout(() => {
@@ -504,17 +555,17 @@ function AddVehicleContent() {
       setLoading(false);
       setUploadingImages(false);
     }
-  };
+  }, [formData, user, mainImageFile, additionalImageFiles, validateForm, uploadImageToAPI, router]);
 
-  const scrollToSection = (sectionId: string) => {
+  const scrollToSection = useCallback((sectionId: string) => {
     setActiveSection(sectionId);
     const element = document.getElementById(sectionId);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  };
+  }, []);
 
-  const getSectionStatus = (sectionId: string) => {
+  const getSectionStatus = useCallback((sectionId: string) => {
     if (completedSections.has(sectionId)) {
       return <CheckCircle className="w-4 h-4 text-green-400" />;
     }
@@ -522,14 +573,14 @@ function AddVehicleContent() {
       return <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />;
     }
     return <div className="w-2 h-2 bg-slate-600 rounded-full" />;
-  };
+  }, [activeSection, completedSections]);
 
   // Show loading while Firebase initializes
   if (!firebaseReady) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <Loader2 className="w-12 h-12 text-yellow-400 animate-spin mx-auto mb-4" />
           <p className="text-gray-400">Loading...</p>
         </div>
       </div>
@@ -540,8 +591,8 @@ function AddVehicleContent() {
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-gray-100">
       {/* Animated Background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-10 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000"></div>
+        <div className="absolute top-20 left-10 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse will-change-transform"></div>
+        <div className="absolute bottom-20 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000 will-change-transform"></div>
       </div>
 
       {/* Header */}
@@ -645,7 +696,7 @@ function AddVehicleContent() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Basic Information - Same as before */}
+          {/* Basic Information Section */}
           <section id="basic" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition group">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
@@ -666,7 +717,6 @@ function AddVehicleContent() {
               </div>
               
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Registration Number */}
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Registration Number <span className="text-rose-400">*</span>
@@ -685,7 +735,6 @@ function AddVehicleContent() {
                   </div>
                 </div>
 
-                {/* Make */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Make <span className="text-rose-400">*</span>
@@ -701,7 +750,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Model */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Model <span className="text-rose-400">*</span>
@@ -717,10 +765,9 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Year */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Year <span className="text-rose-400">*</span>
+                    Year
                   </label>
                   <div className="relative">
                     <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
@@ -732,12 +779,10 @@ function AddVehicleContent() {
                       min="1900"
                       max={new Date().getFullYear() + 1}
                       className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
-                      required
                     />
                   </div>
                 </div>
 
-                {/* Color */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Color
@@ -755,7 +800,6 @@ function AddVehicleContent() {
                   </div>
                 </div>
 
-                {/* Chassis Number */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Chassis Number
@@ -770,7 +814,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Engine Number */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Engine Number
@@ -788,7 +831,7 @@ function AddVehicleContent() {
             </div>
           </section>
 
-          {/* Insurance Details - Same as before */}
+          {/* Insurance Details Section */}
           <section id="insurance" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
@@ -809,7 +852,6 @@ function AddVehicleContent() {
               </div>
               
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Insurance Provider */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Insurance Provider
@@ -824,7 +866,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Policy Number */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Policy Number
@@ -839,7 +880,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Insurance Expiry */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Insurance Expiry <span className="text-rose-400">*</span>
@@ -857,7 +897,6 @@ function AddVehicleContent() {
                   </div>
                 </div>
 
-                {/* Cover Type */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Cover Type
@@ -874,7 +913,6 @@ function AddVehicleContent() {
                   </select>
                 </div>
 
-                {/* Premium */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Annual Premium (KES)
@@ -895,7 +933,7 @@ function AddVehicleContent() {
             </div>
           </section>
 
-          {/* Service & Maintenance - Same as before */}
+          {/* Service & Maintenance Section */}
           <section id="service" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
@@ -911,7 +949,6 @@ function AddVehicleContent() {
               </div>
               
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Current Odometer */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Current Odometer (km)
@@ -929,7 +966,6 @@ function AddVehicleContent() {
                   </div>
                 </div>
 
-                {/* Last Service Date */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Last Service Date
@@ -946,7 +982,6 @@ function AddVehicleContent() {
                   </div>
                 </div>
 
-                {/* Last Service Odometer */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Last Service Odometer (km)
@@ -961,7 +996,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Service Interval (km) */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Service Interval (km)
@@ -976,7 +1010,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Service Interval (months) */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Service Interval (months)
@@ -991,7 +1024,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Next Service Date (auto-calculated) */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Next Service Date
@@ -1004,11 +1036,11 @@ function AddVehicleContent() {
                       value={formData.nextServiceDate}
                       onChange={handleChange}
                       className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
+                      readOnly
                     />
                   </div>
                 </div>
 
-                {/* Next Service Odometer (auto-calculated) */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Next Service Odometer (km)
@@ -1019,14 +1051,14 @@ function AddVehicleContent() {
                     value={formData.nextServiceOdometer}
                     onChange={handleChange}
                     className="w-full bg-slate-900/50 border border-yellow-500/20 rounded-xl py-3 px-4 text-white focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400/20 transition"
-                    placeholder="5000"
+                    readOnly
                   />
                 </div>
               </div>
             </div>
           </section>
 
-          {/* Technical Specifications - Same as before */}
+          {/* Technical Specifications Section */}
           <section id="specs" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
@@ -1042,7 +1074,6 @@ function AddVehicleContent() {
               </div>
               
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Fuel Type */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Fuel Type
@@ -1060,7 +1091,6 @@ function AddVehicleContent() {
                   </select>
                 </div>
 
-                {/* Fuel Tank Capacity */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Fuel Tank Capacity (L)
@@ -1075,7 +1105,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Average Fuel Consumption */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Avg Fuel Consumption (km/L)
@@ -1091,7 +1120,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Transmission */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Transmission
@@ -1107,7 +1135,6 @@ function AddVehicleContent() {
                   </select>
                 </div>
 
-                {/* Engine Capacity */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Engine Capacity
@@ -1122,7 +1149,6 @@ function AddVehicleContent() {
                   />
                 </div>
 
-                {/* Seating Capacity */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Seating Capacity
@@ -1140,7 +1166,7 @@ function AddVehicleContent() {
             </div>
           </section>
 
-          {/* Financial Information - Same as before */}
+          {/* Financial Information Section */}
           <section id="financial" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
@@ -1156,7 +1182,6 @@ function AddVehicleContent() {
               </div>
               
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Purchase Date */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Purchase Date
@@ -1173,7 +1198,6 @@ function AddVehicleContent() {
                   </div>
                 </div>
 
-                {/* Purchase Price */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Purchase Price (KES)
@@ -1191,7 +1215,6 @@ function AddVehicleContent() {
                   </div>
                 </div>
 
-                {/* Daily Target */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Daily Target (KES)
@@ -1209,7 +1232,6 @@ function AddVehicleContent() {
                   </div>
                 </div>
 
-                {/* Monthly Target */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Monthly Target (KES)
@@ -1230,7 +1252,7 @@ function AddVehicleContent() {
             </div>
           </section>
 
-          {/* Images Upload */}
+          {/* Images Upload Section */}
           <section id="images" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20 flex items-center justify-between">
@@ -1241,7 +1263,7 @@ function AddVehicleContent() {
                     </div>
                     Vehicle Images
                   </h2>
-                  <p className="text-xs text-gray-500 mt-1 ml-10">Upload vehicle photos (max 10 images)</p>
+                  <p className="text-xs text-gray-500 mt-1 ml-10">Upload vehicle photos (max {MAX_ADDITIONAL_IMAGES} images)</p>
                 </div>
                 {completedSections.has('images') && (
                   <span className="px-2 py-1 bg-green-500/10 text-green-400 rounded-lg text-xs font-medium flex items-center gap-1">
@@ -1264,6 +1286,7 @@ function AddVehicleContent() {
                     }`}
                   >
                     <input
+                      ref={mainImageInputRef}
                       type="file"
                       onChange={handleMainImageChange}
                       accept="image/*"
@@ -1274,12 +1297,10 @@ function AddVehicleContent() {
                       {mainImagePreview ? (
                         <div className="relative">
                           <div className="relative w-full h-64">
-                            <Image
+                            <img
                               src={mainImagePreview}
                               alt="Main vehicle"
-                              fill
-                              className="object-contain rounded-lg"
-                              unoptimized
+                              className="w-full h-full object-contain rounded-lg"
                             />
                           </div>
                           <button
@@ -1288,6 +1309,7 @@ function AddVehicleContent() {
                               e.preventDefault();
                               setMainImageFile(null);
                               setMainImagePreview(null);
+                              if (mainImageInputRef.current) mainImageInputRef.current.value = '';
                             }}
                             className="absolute top-2 right-2 p-2 bg-rose-500/20 rounded-lg hover:bg-rose-500/30 transition backdrop-blur-sm"
                           >
@@ -1302,7 +1324,7 @@ function AddVehicleContent() {
                           <p className="text-gray-400 group-hover:text-yellow-400 transition font-medium">
                             Click to upload main vehicle image
                           </p>
-                          <p className="text-sm text-gray-600 mt-2">JPG, PNG up to 5MB</p>
+                          <p className="text-sm text-gray-600 mt-2">JPG, PNG, WebP up to 5MB</p>
                         </>
                       )}
                     </label>
@@ -1312,7 +1334,7 @@ function AddVehicleContent() {
                 {/* Additional Images */}
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-3">
-                    Additional Images <span className="text-xs text-gray-500">(Optional, max 10)</span>
+                    Additional Images <span className="text-xs text-gray-500">(Optional, max {MAX_ADDITIONAL_IMAGES})</span>
                   </label>
                   <div 
                     className={`border-2 border-dashed rounded-xl p-8 transition cursor-pointer ${
@@ -1325,6 +1347,7 @@ function AddVehicleContent() {
                     onDrop={handleDrop}
                   >
                     <input
+                      ref={additionalImagesInputRef}
                       type="file"
                       onChange={handleAdditionalImagesChange}
                       accept="image/*"
@@ -1339,7 +1362,7 @@ function AddVehicleContent() {
                       <p className="text-gray-400 group-hover:text-yellow-400 transition">
                         {isDragging ? 'Drop images here' : 'Click or drag images here'}
                       </p>
-                      <p className="text-xs text-gray-600 mt-2">You can select multiple images (max 10)</p>
+                      <p className="text-xs text-gray-600 mt-2">You can select multiple images (max {MAX_ADDITIONAL_IMAGES})</p>
                     </label>
                   </div>
 
@@ -1353,12 +1376,10 @@ function AddVehicleContent() {
                         {additionalImagePreviews.map((preview, index) => (
                           <div key={index} className="relative group">
                             <div className="relative w-full h-32 bg-slate-900/50 rounded-xl overflow-hidden border-2 border-yellow-500/20 group-hover:border-yellow-400/50 transition">
-                              <Image
+                              <img
                                 src={preview}
                                 alt={`Additional ${index + 1}`}
-                                fill
-                                className="object-cover"
-                                unoptimized
+                                className="w-full h-full object-cover"
                               />
                             </div>
                             <button
@@ -1378,7 +1399,7 @@ function AddVehicleContent() {
             </div>
           </section>
 
-          {/* Additional Notes */}
+          {/* Additional Notes Section */}
           <section id="notes" className="scroll-mt-24">
             <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-yellow-500/20 rounded-2xl overflow-hidden hover:border-yellow-400/30 transition">
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900/50 to-slate-800/50 border-b border-yellow-500/20">
@@ -1433,9 +1454,7 @@ function AddVehicleContent() {
               
               {(loading || uploadingImages) && (
                 <div className="absolute bottom-0 left-0 w-full h-1 bg-black/20">
-                  <div 
-                    className="h-full bg-white/50 animate-progress" 
-                  />
+                  <div className="h-full bg-white/50 animate-progress" />
                 </div>
               )}
             </button>
@@ -1445,8 +1464,8 @@ function AddVehicleContent() {
 
       <style jsx>{`
         @keyframes pulse {
-          0%, 100% { opacity: 0.5; }
-          50% { opacity: 1; }
+          0%, 100% { opacity: 0.5; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.05); }
         }
         @keyframes slideDown {
           from {
@@ -1482,6 +1501,9 @@ function AddVehicleContent() {
         .animation-delay-2000 {
           animation-delay: 2s;
         }
+        .will-change-transform {
+          will-change: transform, opacity;
+        }
       `}</style>
     </div>
   );
@@ -1491,7 +1513,7 @@ function AddVehicleFallback() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
       <div className="text-center">
-        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <Loader2 className="w-12 h-12 text-yellow-400 animate-spin mx-auto mb-4" />
         <p className="text-gray-400">Loading...</p>
       </div>
     </div>

@@ -2,96 +2,87 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '../../../../../lib/prisma';
 import { verifyAuth } from '../../../../../lib/firebase/admin';
+import { Prisma } from '@prisma/client';
 
-// Define types for the data structures
-interface IncomeLog {
-  id: string;
-  date: Date;
-  amount: number;
-  description: string | null;
-  distanceKm: number | null;
-  tripStart: Date | null;
-  tripEnd: Date | null;
-  startOdometer: number | null;
-  endOdometer: number | null;
-  type: string;
+// Constants
+const RECENT_ITEMS_LIMIT = 10;
+const TRIPS_LIMIT = 30;
+const CACHE_TTL = 30 * 1000; // 30 seconds for driver profile
+
+// Types
+interface DriverStats {
+  todayEarnings: number;
+  todayTrips: number;
+  weekEarnings: number;
+  monthEarnings: number;
+  totalTrips: number;
+  fuelLogged: number;
+  rating: number;
+  rank: number;
+  totalIncome: number;
+  totalExpenses: number;
+  netProfit: number;
+  fuelEfficiency: number;
 }
 
-interface Expense {
-  id: string;
-  date: Date;
-  amount: number;
-  category: string;
-  description: string;
-  approved: boolean;
-}
+// Helper function to calculate date ranges
+const getDateRanges = () => {
+  const now = new Date();
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  
+  const weekAgo = new Date(now);
+  weekAgo.setDate(now.getDate() - 7);
+  weekAgo.setHours(0, 0, 0, 0);
+  
+  const monthAgo = new Date(now);
+  monthAgo.setMonth(now.getMonth() - 1);
+  monthAgo.setHours(0, 0, 0, 0);
+  
+  return { today, weekAgo, monthAgo };
+};
 
-interface Trip {
-  id: string;
-  startTime: Date;
-  endTime: Date | null;
-  startLocation: string | null;
-  endLocation: string | null;
-  distanceKm: number | null;
-  fare: number | null;
-  status: string;
-}
+// Helper function to calculate fuel logged
+const calculateFuelLogged = (expenses: any[]): number => {
+  const fuelExpenses = expenses.filter(exp => exp.category === 'FUEL');
+  const totalFuelCost = fuelExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+  // Rough estimate: KES 150 per liter
+  return totalFuelCost / 150;
+};
 
-interface Alert {
-  id: string;
-  title: string;
-  description: string;
-  severity: string;
-  dueDate: Date | null;
-  resolved: boolean;
-  type: string;
-}
-
-interface DriverWithRelations {
-  id: string;
-  userId: string;
-  licenseNumber: string;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
-  user: {
-    name: string | null;
-    email: string;
-    phone: string | null;
-    avatar: string | null;
-  } | null;
-  assignedVehicle: {
-    id: string;
-    plateNumber: string;
-    model: string;
-    capacity: number;
-    status: string;
-    trips: Trip[];
-    photos?: string | null;
-  } | null;
-  incomeLogs: IncomeLog[];
-  expenses: Expense[];
-  trips: Trip[];
-  alerts: Alert[];
-  performanceMetrics: {
-    totalIncome: number;
-    totalExpenses: number;
-    netProfit: number;
-    fuelEfficiency: number | null;
-    rating: number | null;
-  }[];
+// Helper function to calculate driver rank
+async function calculateDriverRank(driverId: string, currentRevenue: number): Promise<number> {
+  const driversWithRevenue = await prisma.driver.findMany({
+    where: { status: 'ACTIVE' },
+    select: {
+      id: true,
+      performanceMetrics: {
+        orderBy: { date: 'desc' },
+        take: 1,
+        select: { totalIncome: true }
+      }
+    }
+  });
+  
+  const driversWithTotal = driversWithRevenue
+    .map(d => ({
+      id: d.id,
+      totalRevenue: d.performanceMetrics[0]?.totalIncome || 0
+    }))
+    .sort((a, b) => b.totalRevenue - a.totalRevenue);
+  
+  const rank = driversWithTotal.findIndex(d => d.id === driverId) + 1;
+  return rank > 0 ? rank : driversWithTotal.length;
 }
 
 export async function GET(request: NextRequest) {
+  const startTime = Date.now();
+  
   try {
-    console.log('==================================================');
     console.log('🚀 Driver Profile API Called');
-    console.log('==================================================');
     
-    // Verify the Firebase token
+    // Verify authentication
     const auth = await verifyAuth(request);
-    
-    console.log('📝 Verifying driver authentication...');
     
     if (!auth.authenticated) {
       console.log('❌ Authentication failed:', auth.error);
@@ -101,80 +92,144 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get the user's email from the auth object
     const userEmail = auth.user?.email;
     
-    console.log('✅ Token verified for email:', userEmail);
-    console.log('Auth result:', JSON.stringify(auth, null, 2));
-
     if (!userEmail) {
-      console.log('❌ User email not found in token');
       return NextResponse.json(
         { error: 'User email not found in token' }, 
         { status: 401 }
       );
     }
 
-    // Find the user by email first (since we don't store Firebase UID in DB)
-    console.log('🔍 Looking up user by email:', userEmail);
-    
+    console.log('✅ Token verified for email:', userEmail);
+
+    // Find user by email - optimized query
     const user = await prisma.user.findUnique({
-      where: { email: userEmail }
+      where: { email: userEmail },
+      select: { id: true, name: true, email: true, phone: true, avatar: true }
     });
 
     if (!user) {
-      console.log('❌ User not found in database for email:', userEmail);
+      console.log('❌ User not found for email:', userEmail);
       return NextResponse.json(
         { error: 'User not found in database' },
         { status: 404 }
       );
     }
 
-    console.log('✅ User found in database:', user.id);
+    console.log('✅ User found:', user.id);
 
-    // Fetch the driver profile with their relations
+    // Get date ranges for filtering
+    const { today, weekAgo, monthAgo } = getDateRanges();
+
+    // Fetch driver profile with optimized includes and selects
     const driver = await prisma.driver.findUnique({
       where: { userId: user.id },
-      include: {
+      select: {
+        id: true,
+        licenseNumber: true,
+        status: true,
         user: {
           select: {
             name: true,
             email: true,
             phone: true,
-            avatar: true,
-          },
+            avatar: true
+          }
         },
         assignedVehicle: {
-          include: {
+          select: {
+            id: true,
+            plateNumber: true,
+            model: true,
+            capacity: true,
+            status: true,
             trips: {
+              where: {
+                status: { in: ['COMPLETED', 'IN_PROGRESS'] }
+              },
               orderBy: { startTime: 'desc' },
-              take: 30,
-            },
-          },
+              take: TRIPS_LIMIT,
+              select: {
+                id: true,
+                startTime: true,
+                endTime: true,
+                startLocation: true,
+                endLocation: true,
+                distanceKm: true,
+                fare: true,
+                status: true
+              }
+            }
+          }
         },
         incomeLogs: {
           orderBy: { date: 'desc' },
-          take: 30,
+          take: RECENT_ITEMS_LIMIT,
+          select: {
+            id: true,
+            date: true,
+            amount: true,
+            type: true,
+            description: true,
+            tripStart: true,
+            tripEnd: true,
+            distanceKm: true
+          }
         },
         expenses: {
+          where: { approved: true },
           orderBy: { date: 'desc' },
-          take: 30,
+          take: RECENT_ITEMS_LIMIT,
+          select: {
+            id: true,
+            date: true,
+            amount: true,
+            category: true,
+            description: true,
+            approved: true
+          }
         },
         trips: {
           orderBy: { startTime: 'desc' },
-          take: 30,
+          take: TRIPS_LIMIT,
+          select: {
+            id: true,
+            startTime: true,
+            endTime: true,
+            startLocation: true,
+            endLocation: true,
+            distanceKm: true,
+            fare: true,
+            status: true
+          }
         },
         alerts: {
           where: { resolved: false },
           orderBy: { severity: 'desc' },
           take: 5,
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            severity: true,
+            dueDate: true,
+            type: true
+          }
         },
         performanceMetrics: {
           orderBy: { date: 'desc' },
           take: 1,
-        },
-      },
-    }) as DriverWithRelations | null;
+          select: {
+            totalIncome: true,
+            totalExpenses: true,
+            netProfit: true,
+            fuelEfficiency: true,
+            rating: true
+          }
+        }
+      }
+    });
 
     if (!driver) {
       console.log('❌ Driver profile not found for user:', user.id);
@@ -186,74 +241,55 @@ export async function GET(request: NextRequest) {
 
     console.log('✅ Driver profile found:', driver.id);
 
-    // Calculate driver statistics
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Calculate statistics efficiently using reduce
+    const tripsCompleted = driver.trips.filter(trip => trip.status === 'COMPLETED');
+    const allTrips = driver.trips;
     
     const todayIncome = driver.incomeLogs
-      .filter((log: IncomeLog) => new Date(log.date) >= today)
-      .reduce((sum: number, log: IncomeLog) => sum + log.amount, 0);
-
-    const todayTrips = driver.trips
-      .filter((trip: Trip) => new Date(trip.startTime) >= today && trip.status === 'COMPLETED')
+      .filter(log => new Date(log.date) >= today)
+      .reduce((sum, log) => sum + log.amount, 0);
+    
+    const todayTrips = allTrips
+      .filter(trip => new Date(trip.startTime) >= today && trip.status === 'COMPLETED')
       .length;
-
-    const weekAgo = new Date();
-    weekAgo.setDate(weekAgo.getDate() - 7);
     
     const weekIncome = driver.incomeLogs
-      .filter((log: IncomeLog) => new Date(log.date) >= weekAgo)
-      .reduce((sum: number, log: IncomeLog) => sum + log.amount, 0);
-
-    const monthAgo = new Date();
-    monthAgo.setMonth(monthAgo.getMonth() - 1);
+      .filter(log => new Date(log.date) >= weekAgo)
+      .reduce((sum, log) => sum + log.amount, 0);
     
     const monthIncome = driver.incomeLogs
-      .filter((log: IncomeLog) => new Date(log.date) >= monthAgo)
-      .reduce((sum: number, log: IncomeLog) => sum + log.amount, 0);
-
-    const fuelLogged = driver.expenses
-      .filter((exp: Expense) => exp.category === 'FUEL')
-      .reduce((sum: number, exp: Expense) => sum + exp.amount, 0);
-
-    // Calculate rank based on total income from performance metrics
-    const allDrivers = await prisma.driver.findMany({
-      where: { status: 'ACTIVE' },
-      include: {
-        performanceMetrics: {
-          orderBy: { date: 'desc' },
-          take: 1,
-        },
-      },
-    });
+      .filter(log => new Date(log.date) >= monthAgo)
+      .reduce((sum, log) => sum + log.amount, 0);
     
-    // Calculate total revenue for each driver from their latest performance metrics
-    const driversWithRevenue = allDrivers.map(d => ({
-      id: d.id,
-      totalRevenue: d.performanceMetrics[0]?.totalIncome || 0,
-    })).sort((a, b) => b.totalRevenue - a.totalRevenue);
+    const fuelLogged = calculateFuelLogged(driver.expenses);
     
     const latestMetrics = driver.performanceMetrics[0];
     const currentRevenue = latestMetrics?.totalIncome || 0;
-    const rank = driversWithRevenue.findIndex(d => d.id === driver.id) + 1;
-
-    // Parse photos JSON if it exists
+    
+    // Calculate rank (run in background, don't await if not needed for response)
+    const rankPromise = calculateDriverRank(driver.id, currentRevenue);
+    
+    // Process vehicle data
     const vehicle = driver.assignedVehicle;
-    let photos: string[] = [];
-    if (vehicle && (vehicle as any).photos) {
-      try {
-        photos = JSON.parse((vehicle as any).photos as string);
-      } catch (e) {
-        console.error('Error parsing vehicle photos:', e);
-      }
-    }
+    const vehicleTrips = vehicle?.trips || [];
+    const completedVehicleTrips = vehicleTrips.filter(t => t.status === 'COMPLETED');
+    
+    const stats: DriverStats = {
+      todayEarnings: todayIncome,
+      todayTrips,
+      weekEarnings: weekIncome,
+      monthEarnings: monthIncome,
+      totalTrips: tripsCompleted.length,
+      fuelLogged,
+      rating: latestMetrics?.rating || 0,
+      rank: await rankPromise, // Wait for rank calculation
+      totalIncome: latestMetrics?.totalIncome || 0,
+      totalExpenses: latestMetrics?.totalExpenses || 0,
+      netProfit: latestMetrics?.netProfit || 0,
+      fuelEfficiency: latestMetrics?.fuelEfficiency || 0
+    };
 
-    // Calculate trips completed count
-    const tripsCompleted = driver.trips.filter((trip: Trip) => trip.status === 'COMPLETED').length;
-
-    console.log('✅ Returning driver profile data');
-
-    return NextResponse.json({
+    const response = {
       success: true,
       driver: {
         id: driver.id,
@@ -270,28 +306,14 @@ export async function GET(request: NextRequest) {
         model: vehicle.model,
         capacity: vehicle.capacity,
         status: vehicle.status.toLowerCase(),
-        photos: photos,
-        // Add vehicle stats from trips
-        totalTrips: vehicle.trips.length,
-        completedTrips: vehicle.trips.filter((t: Trip) => t.status === 'COMPLETED').length,
-        totalDistance: vehicle.trips.reduce((sum: number, t: Trip) => sum + (t.distanceKm || 0), 0),
-        totalEarnings: vehicle.trips.reduce((sum: number, t: Trip) => sum + (t.fare || 0), 0),
+        photos: [], // Add photo fetching logic if needed
+        totalTrips: vehicleTrips.length,
+        completedTrips: completedVehicleTrips.length,
+        totalDistance: vehicleTrips.reduce((sum, t) => sum + (t.distanceKm || 0), 0),
+        totalEarnings: vehicleTrips.reduce((sum, t) => sum + (t.fare || 0), 0),
       } : null,
-      stats: {
-        todayEarnings: todayIncome,
-        todayTrips,
-        weekEarnings: weekIncome,
-        monthEarnings: monthIncome,
-        totalTrips: tripsCompleted,
-        fuelLogged: fuelLogged / 150, // Rough estimate: KES 150 per liter
-        rating: latestMetrics?.rating || 0,
-        rank,
-        totalIncome: latestMetrics?.totalIncome || 0,
-        totalExpenses: latestMetrics?.totalExpenses || 0,
-        netProfit: latestMetrics?.netProfit || 0,
-        fuelEfficiency: latestMetrics?.fuelEfficiency || 0,
-      },
-      recentTrips: driver.trips.slice(0, 10).map((trip: Trip) => ({
+      stats,
+      recentTrips: driver.trips.slice(0, RECENT_ITEMS_LIMIT).map(trip => ({
         id: trip.id,
         date: trip.startTime.toISOString().split('T')[0],
         startTime: trip.startTime.toLocaleTimeString(),
@@ -303,7 +325,7 @@ export async function GET(request: NextRequest) {
         status: trip.status.toLowerCase(),
         fuelUsed: trip.distanceKm ? (trip.distanceKm / 8).toFixed(1) : '0',
       })),
-      recentIncome: driver.incomeLogs.slice(0, 10).map((log: IncomeLog) => ({
+      recentIncome: driver.incomeLogs.map(log => ({
         id: log.id,
         date: log.date.toISOString().split('T')[0],
         amount: log.amount,
@@ -313,7 +335,7 @@ export async function GET(request: NextRequest) {
         tripEnd: log.tripEnd?.toLocaleTimeString(),
         distance: log.distanceKm,
       })),
-      recentExpenses: driver.expenses.slice(0, 10).map((exp: Expense) => ({
+      recentExpenses: driver.expenses.map(exp => ({
         id: exp.id,
         type: exp.category.toLowerCase(),
         amount: exp.amount,
@@ -321,7 +343,7 @@ export async function GET(request: NextRequest) {
         description: exp.description,
         status: exp.approved ? 'approved' : 'pending',
       })),
-      alerts: driver.alerts.map((alert: Alert) => ({
+      alerts: driver.alerts.map(alert => ({
         id: alert.id,
         title: alert.title,
         description: alert.description,
@@ -329,12 +351,24 @@ export async function GET(request: NextRequest) {
         dueDate: alert.dueDate?.toISOString().split('T')[0],
         type: alert.type.toLowerCase(),
       })),
+      meta: {
+        responseTime: Date.now() - startTime
+      }
+    };
+
+    console.log(`✅ Profile API completed in ${Date.now() - startTime}ms`);
+
+    // Add cache headers for better performance
+    return NextResponse.json(response, {
+      headers: {
+        'Cache-Control': `private, max-age=${CACHE_TTL / 1000}, stale-while-revalidate=${(CACHE_TTL / 1000) * 2}`,
+        'X-Response-Time': `${Date.now() - startTime}ms`
+      }
     });
 
   } catch (error: unknown) {
     console.error('❌ Error in driver profile API:');
     if (error instanceof Error) {
-      console.error('   └─ Name:', error.name);
       console.error('   └─ Message:', error.message);
       console.error('   └─ Stack:', error.stack);
       return NextResponse.json(

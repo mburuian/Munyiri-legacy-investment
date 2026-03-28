@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, Suspense, useCallback, useMemo, memo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -59,7 +59,8 @@ import {
   BatteryFull,
   BatteryMedium,
   BatteryLow,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Loader2
 } from "lucide-react";
 
 // Firebase will be dynamically imported on client side only
@@ -195,6 +196,209 @@ const getInitials = (name: string, email: string) => {
   return email.substring(0, 2).toUpperCase();
 };
 
+// Memoized Helper Components
+const StatCard = memo(({ label, value, icon: Icon, color }: { 
+  label: string; 
+  value: string; 
+  icon: React.ElementType; 
+  color: string;
+}) => {
+  const colorClasses: Record<string, string> = {
+    amber: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+    green: "text-green-400 bg-green-500/10 border-green-500/30",
+    blue: "text-blue-400 bg-blue-500/10 border-blue-500/30",
+    orange: "text-orange-400 bg-orange-500/10 border-orange-500/30",
+  };
+
+  return (
+    <div className={`bg-slate-800/50 backdrop-blur-sm border rounded-xl p-4 ${colorClasses[color]?.split(' ')[2] || 'border-yellow-500/30'}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-gray-400">{label}</span>
+        <Icon className={`w-4 h-4 ${colorClasses[color]?.split(' ')[0] || 'text-yellow-400'}`} />
+      </div>
+      <p className="text-2xl font-bold mt-2">{value}</p>
+    </div>
+  );
+});
+
+StatCard.displayName = 'StatCard';
+
+const StatusBadge = memo(({ status }: { status: string }) => {
+  const styles: Record<string, string> = {
+    ACTIVE: "bg-green-500/20 text-green-400 border border-green-500/30",
+    MAINTENANCE: "bg-amber-500/20 text-amber-400 border border-amber-500/30",
+    INACTIVE: "bg-rose-500/20 text-rose-400 border border-rose-500/30",
+    OUT_OF_SERVICE: "bg-red-500/20 text-red-400 border border-red-500/30"
+  };
+  
+  return (
+    <span className={`px-2 py-1 rounded-full text-xs font-medium ${styles[status] || styles.INACTIVE}`}>
+      {status?.replace(/_/g, ' ') || 'Unknown'}
+    </span>
+  );
+});
+
+StatusBadge.displayName = 'StatusBadge';
+
+const DriverStatusBadge = memo(({ status }: { status: string }) => {
+  const styles: Record<string, string> = {
+    ACTIVE: "bg-green-500/20 text-green-400 border border-green-500/30",
+    OFF_DUTY: "bg-gray-500/20 text-gray-400 border border-gray-500/30",
+    ON_LEAVE: "bg-amber-500/20 text-amber-400 border border-amber-500/30",
+    SUSPENDED: "bg-rose-500/20 text-rose-400 border border-rose-500/30",
+    TERMINATED: "bg-red-500/20 text-red-400 border border-red-500/30"
+  };
+  
+  return (
+    <span className={`px-2 py-1 rounded-full text-xs font-medium ${styles[status] || styles.OFF_DUTY}`}>
+      {status?.replace(/_/g, ' ') || 'Unknown'}
+    </span>
+  );
+});
+
+DriverStatusBadge.displayName = 'DriverStatusBadge';
+
+const QuickActionButton = memo(({ icon: Icon, label, color, onClick }: { 
+  icon: React.ElementType; 
+  label: string; 
+  color: string; 
+  onClick: () => void;
+}) => {
+  const colorClasses: Record<string, string> = {
+    yellow: "from-yellow-500/10 to-amber-600/5 border-yellow-500/20 text-yellow-400 hover:from-yellow-500/20 hover:to-amber-600/10",
+    blue: "from-blue-500/10 to-blue-600/5 border-blue-500/20 text-blue-400 hover:from-blue-500/20 hover:to-blue-600/10",
+    rose: "from-rose-500/10 to-rose-600/5 border-rose-500/20 text-rose-400 hover:from-rose-500/20 hover:to-rose-600/10",
+    purple: "from-purple-500/10 to-purple-600/5 border-purple-500/20 text-purple-400 hover:from-purple-500/20 hover:to-purple-600/10",
+  };
+
+  return (
+    <button
+      onClick={onClick}
+      className={`p-3 sm:p-4 bg-gradient-to-br ${colorClasses[color]} rounded-xl hover:shadow-lg transition-all group border`}
+    >
+      <Icon className={`w-4 h-4 sm:w-5 sm:h-5 mx-auto mb-1 sm:mb-2 group-hover:scale-110 transition`} />
+      <span className="text-[10px] sm:text-xs font-medium">{label}</span>
+    </button>
+  );
+});
+
+QuickActionButton.displayName = 'QuickActionButton';
+
+const VehicleRow = memo(({ vehicle, onView, onEdit, getVehiclePrimaryImage, getServiceStatus }: {
+  vehicle: Vehicle;
+  onView: (id: string) => void;
+  onEdit: (id: string) => void;
+  getVehiclePrimaryImage: (vehicle: Vehicle) => string | null;
+  getServiceStatus: (nextService?: string) => string;
+}) => {
+  const [imageError, setImageError] = useState(false);
+  
+  const primaryImage = useMemo(() => {
+    if (imageError) return null;
+    return getVehiclePrimaryImage(vehicle);
+  }, [vehicle, imageError, getVehiclePrimaryImage]);
+
+  return (
+    <tr className="hover:bg-yellow-500/5 transition-colors">
+      <td className="py-3">
+        {primaryImage ? (
+          <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-slate-700">
+            <img
+              src={primaryImage}
+              alt={vehicle.plateNumber || 'Vehicle'}
+              className="w-full h-full object-cover"
+              loading="lazy"
+              onError={() => setImageError(true)}
+            />
+          </div>
+        ) : (
+          <div className="w-12 h-12 rounded-lg bg-slate-700 flex items-center justify-center">
+            <ImageIcon className="w-6 h-6 text-gray-500" />
+          </div>
+        )}
+       </td>
+      <td className="py-3 font-medium">{vehicle.plateNumber || 'N/A'}</td>
+      <td className="py-3 text-gray-400">{vehicle.model || 'N/A'}</td>
+      <td className="py-3 text-gray-400">{vehicle.driver?.user?.name || 'Unassigned'}</td>
+      <td className="py-3">
+        <StatusBadge status={vehicle.status || 'INACTIVE'} />
+      </td>
+      <td className="py-3">
+        <span className={`text-xs ${getServiceStatus(vehicle.nextService)}`}>
+          {vehicle.nextService ? new Date(vehicle.nextService).toLocaleDateString() : 'Not set'}
+        </span>
+      </td>
+      <td className="py-3">
+        <div className="flex items-center justify-center gap-2">
+          <button 
+            onClick={() => onView(vehicle.id)}
+            className="p-1 hover:bg-slate-700 rounded-lg transition"
+            aria-label="View vehicle"
+          >
+            <Eye className="w-4 h-4 text-gray-400" />
+          </button>
+          <button 
+            onClick={() => onEdit(vehicle.id)}
+            className="p-1 hover:bg-slate-700 rounded-lg transition"
+            aria-label="Edit vehicle"
+          >
+            <Edit className="w-4 h-4 text-gray-400" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+});
+
+VehicleRow.displayName = 'VehicleRow';
+
+const DriverRow = memo(({ driver, onView, onEdit }: {
+  driver: Driver;
+  onView: (id: string) => void;
+  onEdit: (id: string) => void;
+}) => (
+  <tr className="hover:bg-yellow-500/5 transition-colors">
+    <td className="py-3">
+      <div>
+        <span className="font-medium text-sm">{driver.name || 'N/A'}</span>
+        <p className="text-xs text-gray-500 truncate max-w-[150px]">{driver.email || 'N/A'}</p>
+      </div>
+    </td>
+    <td className="py-3 text-sm text-gray-400">{driver.assignedVehicle?.plateNumber || 'Unassigned'}</td>
+    <td className="py-3 text-right text-sm font-medium">{(driver.tripsCompleted || 0).toLocaleString()}</td>
+    <td className="py-3 text-right text-sm text-yellow-400">{formatCurrency(driver.totalRevenue || 0)}</td>
+    <td className="py-3">
+      <DriverStatusBadge status={driver.status || 'OFF_DUTY'} />
+    </td>
+    <td className="py-3">
+      <div className="flex items-center gap-1">
+        <Award className="w-3 h-3 text-yellow-400" />
+        <span className="text-sm">{(driver.rating || 0).toFixed(1)}</span>
+      </div>
+    </td>
+    <td className="py-3">
+      <div className="flex items-center justify-center gap-2">
+        <button 
+          onClick={() => onView(driver.id)}
+          className="p-1 hover:bg-slate-700 rounded-lg transition"
+          aria-label="View driver"
+        >
+          <Eye className="w-4 h-4 text-gray-400" />
+        </button>
+        <button 
+          onClick={() => onEdit(driver.id)}
+          className="p-1 hover:bg-slate-700 rounded-lg transition"
+          aria-label="Edit driver"
+        >
+          <Edit className="w-4 h-4 text-gray-400" />
+        </button>
+      </div>
+    </td>
+  </tr>
+));
+
+DriverRow.displayName = 'DriverRow';
+
 function DashboardContent() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -218,6 +422,59 @@ function DashboardContent() {
   const [logoError, setLogoError] = useState(false);
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Memoized values for performance
+  const filteredVehicles = useMemo(() => {
+    if (!searchQuery) return vehicles;
+    return vehicles.filter(v => 
+      v.plateNumber?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      v.model?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [vehicles, searchQuery]);
+
+  const filteredDrivers = useMemo(() => {
+    if (!searchQuery) return drivers;
+    return drivers.filter(d => 
+      d.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      d.email?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [drivers, searchQuery]);
+
+  const vehiclesNeedingService = useMemo(() => 
+    vehicles.filter(v => {
+      if (!v.nextService) return false;
+      const daysUntilService = Math.ceil((new Date(v.nextService).getTime() - new Date().getTime()) / (1000 * 3600 * 24));
+      return daysUntilService <= 7 && daysUntilService >= 0;
+    }), [vehicles]);
+
+  // Debounced search
+  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const timeoutId = setTimeout(() => setSearchQuery(e.target.value), 300);
+    return () => clearTimeout(timeoutId);
+  }, []);
+
+  const getServiceStatus = useCallback((nextService?: string): string => {
+    if (!nextService) return "text-gray-500";
+    const daysUntil = Math.ceil((new Date(nextService).getTime() - new Date().getTime()) / (1000 * 3600 * 24));
+    if (daysUntil <= 0) return "text-red-400";
+    if (daysUntil <= 7) return "text-amber-400";
+    return "text-gray-400";
+  }, []);
+
+  const getVehiclePrimaryImage = useCallback((vehicle: Vehicle): string | null => {
+    if (vehicle.images && vehicle.images.length > 0) {
+      const primaryImage = vehicle.images.find(img => img.isPrimary);
+      const imageUrl = primaryImage?.url || vehicle.images[0]?.url;
+      if (imageUrl && (imageUrl.startsWith('data:image') || imageUrl.startsWith('http'))) {
+        return imageUrl;
+      }
+    }
+    if (vehicle.mainImage && vehicle.mainImage.startsWith('data:image')) {
+      return vehicle.mainImage;
+    }
+    return null;
+  }, []);
 
   // Load Firebase dynamically on client side only
   useEffect(() => {
@@ -260,9 +517,9 @@ function DashboardContent() {
     });
 
     return () => unsubscribe();
-  }, [firebaseReady, router]);
+  }, [firebaseReady, router, refreshKey]);
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
       
@@ -283,22 +540,22 @@ function DashboardContent() {
         alertsResponse
       ] = await Promise.all([
         fetch('/api/admin/stats', {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { 'Authorization': `Bearer ${token}`, 'Cache-Control': 'no-cache' },
         }),
         fetch('/api/admin/vehicles', {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { 'Authorization': `Bearer ${token}`, 'Cache-Control': 'no-cache' },
         }),
         fetch('/api/admin/drivers', {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { 'Authorization': `Bearer ${token}`, 'Cache-Control': 'no-cache' },
         }),
         fetch('/api/admin/income?limit=5', {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { 'Authorization': `Bearer ${token}`, 'Cache-Control': 'no-cache' },
         }),
         fetch('/api/admin/expenses?limit=5', {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { 'Authorization': `Bearer ${token}`, 'Cache-Control': 'no-cache' },
         }),
         fetch('/api/admin/alerts', {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { 'Authorization': `Bearer ${token}`, 'Cache-Control': 'no-cache' },
         })
       ]);
 
@@ -352,26 +609,18 @@ function DashboardContent() {
       const vehiclesWithImages = await Promise.all(
         vehiclesArray.map(async (vehicle) => {
           try {
-            console.log(`Fetching images for vehicle ${vehicle.id} (${vehicle.plateNumber})`);
             const imagesResponse = await fetch(`/api/upload?entityType=vehicle&entityId=${vehicle.id}`, {
               headers: { 'Authorization': `Bearer ${token}` }
             });
             
             if (imagesResponse.ok) {
               const imagesData = await imagesResponse.json();
-              console.log(`📸 Vehicle ${vehicle.plateNumber} has ${imagesData.images?.length || 0} images`);
-              if (imagesData.images && imagesData.images.length > 0) {
-                const firstImage = imagesData.images[0];
-                console.log(`  First image URL type: ${firstImage.url?.substring(0, 50)}...`);
-                console.log(`  Is primary: ${firstImage.isPrimary}`);
-              }
               return { 
                 ...vehicle, 
                 images: imagesData.images || [],
-                mainImage: null // Clear any old mainImage to use images array
+                mainImage: null
               };
             } else {
-              console.error(`Failed to fetch images for vehicle ${vehicle.id}: ${imagesResponse.status}`);
               return { 
                 ...vehicle, 
                 images: [],
@@ -452,9 +701,9 @@ function DashboardContent() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [router]);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       if (auth) {
         await auth.signOut();
@@ -463,69 +712,34 @@ function DashboardContent() {
     } catch (error) {
       console.error('Logout error:', error);
     }
-  };
+  }, [router]);
 
-  const handleAddVehicle = () => {
+  const handleRefresh = useCallback(() => {
+    setRefreshKey(prev => prev + 1);
+  }, []);
+
+  const handleAddVehicle = useCallback(() => {
     router.push('/dashboards/admin/vehicles/add-vehicle');
-  };
+  }, [router]);
 
-  const handleAddDriver = () => {
+  const handleAddDriver = useCallback(() => {
     router.push('/dashboards/admin/admit-driver');
-  };
+  }, [router]);
 
-  const handleLogIncome = () => {
+  const handleLogIncome = useCallback(() => {
     router.push('/dashboards/admin/income/add');
-  };
+  }, [router]);
 
-  const handleLogExpense = () => {
+  const handleLogExpense = useCallback(() => {
     router.push('/dashboards/admin/expenses/add');
-  };
-
-  const vehiclesNeedingService = vehicles.filter(v => {
-    if (!v.nextService) return false;
-    const daysUntilService = Math.ceil((new Date(v.nextService).getTime() - new Date().getTime()) / (1000 * 3600 * 24));
-    return daysUntilService <= 7 && daysUntilService >= 0;
-  });
-
-  const getVehiclePrimaryImage = (vehicle: Vehicle): string | null => {
-    // Debug: Log what we have
-    console.log(`Getting image for vehicle ${vehicle.plateNumber}:`, {
-      hasImages: !!vehicle.images,
-      imagesCount: vehicle.images?.length || 0,
-      hasMainImage: !!vehicle.mainImage
-    });
-
-    // First check if we have images from the API (vehicle.images array)
-    if (vehicle.images && vehicle.images.length > 0) {
-      const primaryImage = vehicle.images.find(img => img.isPrimary);
-      const imageUrl = primaryImage?.url || vehicle.images[0]?.url;
-      if (imageUrl) {
-        // Validate that it's a proper image URL (starts with data:image or http)
-        if (imageUrl.startsWith('data:image') || imageUrl.startsWith('http')) {
-          console.log(`✅ Using API image for ${vehicle.plateNumber}`);
-          return imageUrl;
-        } else {
-          console.warn(`⚠️ Invalid image URL format for ${vehicle.plateNumber}:`, imageUrl.substring(0, 100));
-        }
-      }
-    }
-    
-    // Check if there's a mainImage that looks like base64 (starts with data:image)
-    if (vehicle.mainImage && vehicle.mainImage.startsWith('data:image')) {
-      console.log(`✅ Using base64 mainImage for ${vehicle.plateNumber}`);
-      return vehicle.mainImage;
-    }
-    
-    console.log(`❌ No valid image found for ${vehicle.plateNumber}`);
-    return null;
-  };
+  }, [router]);
 
   // Show loading while Firebase initializes
   if (!firebaseReady) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+          <Loader2 className="w-12 h-12 text-yellow-400 animate-spin mx-auto mb-4" />
           <p className="text-gray-400">Loading...</p>
         </div>
       </div>
@@ -539,7 +753,7 @@ function DashboardContent() {
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
         <div className="text-center">
           <div className="relative">
-            <div className="w-20 h-20 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+            <Loader2 className="w-20 h-20 text-yellow-400 animate-spin mx-auto mb-4" />
             <Car className="w-8 h-8 text-yellow-400 absolute top-6 left-1/2 -translate-x-1/2 animate-pulse" />
           </div>
           <p className="text-gray-400">Loading dashboard data...</p>
@@ -550,14 +764,14 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-gray-100 font-sans overflow-x-hidden">
-      {/* Animated background */}
+      {/* Animated background - Optimized with will-change */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-full opacity-5">
           <div className="relative w-full h-full">
             {[...Array(20)].map((_, i) => (
               <div
                 key={i}
-                className="absolute w-full h-0.5 bg-yellow-400"
+                className="absolute w-full h-0.5 bg-yellow-400 will-change-transform"
                 style={{
                   top: `${i * 5}%`,
                   transform: `translateX(${i % 2 === 0 ? '-50%' : '0'})`,
@@ -569,8 +783,8 @@ function DashboardContent() {
           </div>
         </div>
         
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000"></div>
+        <div className="absolute -top-40 -right-40 w-96 h-96 bg-yellow-500/5 rounded-full blur-3xl animate-pulse will-change-transform"></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl animate-pulse animation-delay-2000 will-change-transform"></div>
       </div>
       
       {/* Mobile Sidebar Overlay */}
@@ -585,7 +799,7 @@ function DashboardContent() {
       <aside className={`
         fixed top-0 left-0 z-50 h-full w-72 
         bg-slate-900/95 backdrop-blur-xl border-r border-yellow-500/20
-        transform transition-transform duration-300 ease-in-out
+        transform transition-transform duration-300 ease-in-out will-change-transform
         lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-yellow-400 via-amber-400 to-yellow-400"></div>
@@ -602,6 +816,7 @@ function DashboardContent() {
                     fill
                     className="object-contain rounded-xl"
                     onError={() => setLogoError(true)}
+                    priority
                   />
                 ) : (
                   <div className="w-12 h-12 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-xl flex items-center justify-center shadow-lg shadow-yellow-500/20">
@@ -682,6 +897,7 @@ function DashboardContent() {
               <button
                 onClick={() => setSidebarOpen(true)}
                 className="p-2 hover:bg-slate-800 rounded-xl lg:hidden border border-yellow-500/20"
+                aria-label="Open menu"
               >
                 <Menu className="w-5 h-5" />
               </button>
@@ -711,8 +927,7 @@ function DashboardContent() {
                 <input
                   type="text"
                   placeholder="Search vehicles, drivers, transactions..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={handleSearchChange}
                   className="w-64 lg:w-96 bg-slate-800/50 border border-yellow-500/20 rounded-xl py-2 pl-10 pr-4 text-sm text-gray-300 placeholder-gray-500 focus:outline-none focus:border-yellow-400/50 focus:ring-1 focus:ring-yellow-400/20 transition"
                 />
               </div>
@@ -735,10 +950,19 @@ function DashboardContent() {
                 ))}
               </div>
 
+              <button 
+                onClick={handleRefresh}
+                className="p-2 hover:bg-slate-800 rounded-xl border border-yellow-500/20"
+                aria-label="Refresh data"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+
               <div className="relative">
                 <button 
                   onClick={() => setShowNotifications(!showNotifications)}
                   className="relative p-2 hover:bg-slate-800 rounded-xl border border-yellow-500/20"
+                  aria-label="Notifications"
                 >
                   <Bell className="w-5 h-5" />
                   {notifications.length > 0 && (
@@ -779,7 +1003,7 @@ function DashboardContent() {
                 )}
               </div>
 
-              <button className="hidden sm:block p-2 hover:bg-slate-800 rounded-xl border border-yellow-500/20">
+              <button className="hidden sm:block p-2 hover:bg-slate-800 rounded-xl border border-yellow-500/20" aria-label="Filter">
                 <Filter className="w-5 h-5" />
               </button>
 
@@ -970,7 +1194,7 @@ function DashboardContent() {
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-6 border-b border-yellow-500/20">
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <Truck className="w-5 h-5 text-yellow-400" />
-                Fleet Overview ({vehicles.length} vehicles)
+                Fleet Overview ({filteredVehicles.length} vehicles)
               </h3>
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <button 
@@ -980,14 +1204,14 @@ function DashboardContent() {
                   <PlusCircle className="w-4 h-4" />
                   Add Vehicle
                 </button>
-                <button className="p-2 hover:bg-slate-700 rounded-lg border border-yellow-500/20">
+                <button className="p-2 hover:bg-slate-700 rounded-lg border border-yellow-500/20" aria-label="Export">
                   <Download className="w-4 h-4 text-gray-400" />
                 </button>
               </div>
             </div>
 
             <div className="p-4 sm:p-6">
-              {vehicles.length > 0 ? (
+              {filteredVehicles.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[900px]">
                     <thead>
@@ -1002,71 +1226,18 @@ function DashboardContent() {
                        </tr>
                     </thead>
                     <tbody className="divide-y divide-yellow-500/10">
-                      {vehicles.slice(0, 5).map((vehicle) => {
-                        const primaryImage = getVehiclePrimaryImage(vehicle);
-                        return (
-                          <tr key={vehicle.id} className="hover:bg-yellow-500/5 transition-colors">
-                            <td className="py-3">
-                              {primaryImage ? (
-                                <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-slate-700">
-                                  <img
-                                    src={primaryImage}
-                                    alt={vehicle.plateNumber || 'Vehicle'}
-                                    className="w-full h-full object-cover"
-                                    onError={(e) => {
-                                      console.error(`Failed to load image for vehicle ${vehicle.plateNumber}`);
-                                      console.error(`Image URL: ${primaryImage.substring(0, 100)}...`);
-                                      e.currentTarget.style.display = 'none';
-                                      // Show fallback
-                                      const parent = e.currentTarget.parentElement;
-                                      if (parent) {
-                                        const fallback = document.createElement('div');
-                                        fallback.className = 'w-full h-full flex items-center justify-center';
-                                        fallback.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>';
-                                        parent.appendChild(fallback);
-                                        e.currentTarget.remove();
-                                      }
-                                    }}
-                                  />
-                                </div>
-                              ) : (
-                                <div className="w-12 h-12 rounded-lg bg-slate-700 flex items-center justify-center">
-                                  <ImageIcon className="w-6 h-6 text-gray-500" />
-                                </div>
-                              )}
-                             </td>
-                            <td className="py-3 font-medium">{vehicle.plateNumber || 'N/A'}</td>
-                            <td className="py-3 text-gray-400">{vehicle.model || 'N/A'}</td>
-                            <td className="py-3 text-gray-400">{vehicle.driver?.user?.name || 'Unassigned'}</td>
-                            <td className="py-3">
-                              <StatusBadge status={vehicle.status || 'INACTIVE'} />
-                             </td>
-                            <td className="py-3">
-                              <span className={`text-xs ${getServiceStatus(vehicle.nextService)}`}>
-                                {vehicle.nextService ? new Date(vehicle.nextService).toLocaleDateString() : 'Not set'}
-                              </span>
-                             </td>
-                            <td className="py-3">
-                              <div className="flex items-center justify-center gap-2">
-                                <button 
-                                  onClick={() => router.push(`/dashboards/admin/vehicles/${vehicle.id}`)}
-                                  className="p-1 hover:bg-slate-700 rounded-lg transition"
-                                >
-                                  <Eye className="w-4 h-4 text-gray-400" />
-                                </button>
-                                <button 
-                                  onClick={() => router.push(`/dashboards/admin/vehicles/${vehicle.id}/edit`)}
-                                  className="p-1 hover:bg-slate-700 rounded-lg transition"
-                                >
-                                  <Edit className="w-4 h-4 text-gray-400" />
-                                </button>
-                              </div>
-                             </td>
-                          </tr>
-                        );
-                      })}
+                      {filteredVehicles.slice(0, 5).map((vehicle) => (
+                        <VehicleRow
+                          key={vehicle.id}
+                          vehicle={vehicle}
+                          onView={(id) => router.push(`/dashboards/admin/vehicles/${id}`)}
+                          onEdit={(id) => router.push(`/dashboards/admin/vehicles/${id}/edit`)}
+                          getVehiclePrimaryImage={getVehiclePrimaryImage}
+                          getServiceStatus={getServiceStatus}
+                        />
+                      ))}
                     </tbody>
-                  </table>
+                   </table>
                 </div>
               ) : (
                 <div className="text-center py-8">
@@ -1081,10 +1252,10 @@ function DashboardContent() {
                 </div>
               )}
               
-              {vehicles.length > 5 && (
+              {filteredVehicles.length > 5 && (
                 <div className="mt-4 text-center">
                   <Link href="/dashboards/admin/vehicles" className="text-sm text-yellow-400 hover:text-yellow-300">
-                    View all {vehicles.length} vehicles →
+                    View all {filteredVehicles.length} vehicles →
                   </Link>
                 </div>
               )}
@@ -1096,7 +1267,7 @@ function DashboardContent() {
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-6 border-b border-yellow-500/20">
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <Users className="w-5 h-5 text-yellow-400" />
-                Driver Performance ({drivers.length} drivers)
+                Driver Performance ({filteredDrivers.length} drivers)
               </h3>
               <button 
                 onClick={handleAddDriver}
@@ -1108,7 +1279,7 @@ function DashboardContent() {
             </div>
 
             <div className="p-4 sm:p-6">
-              {drivers.length > 0 ? (
+              {filteredDrivers.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[700px]">
                     <thead>
@@ -1123,46 +1294,16 @@ function DashboardContent() {
                        </tr>
                     </thead>
                     <tbody className="divide-y divide-yellow-500/10">
-                      {drivers.slice(0, 5).map((driver) => (
-                        <tr key={driver.id} className="hover:bg-yellow-500/5 transition-colors">
-                          <td className="py-3">
-                            <div>
-                              <span className="font-medium text-sm">{driver.name || 'N/A'}</span>
-                              <p className="text-xs text-gray-500 truncate max-w-[150px]">{driver.email || 'N/A'}</p>
-                            </div>
-                           </td>
-                          <td className="py-3 text-sm text-gray-400">{driver.assignedVehicle?.plateNumber || 'Unassigned'}</td>
-                          <td className="py-3 text-right text-sm font-medium">{(driver.tripsCompleted || 0).toLocaleString()}</td>
-                          <td className="py-3 text-right text-sm text-yellow-400">{formatCurrency(driver.totalRevenue || 0)}</td>
-                          <td className="py-3">
-                            <DriverStatusBadge status={driver.status || 'OFF_DUTY'} />
-                           </td>
-                          <td className="py-3">
-                            <div className="flex items-center gap-1">
-                              <Award className="w-3 h-3 text-yellow-400" />
-                              <span className="text-sm">{(driver.rating || 0).toFixed(1)}</span>
-                            </div>
-                           </td>
-                          <td className="py-3">
-                            <div className="flex items-center justify-center gap-2">
-                              <button 
-                                onClick={() => router.push(`/dashboards/admin/drivers/${driver.id}`)}
-                                className="p-1 hover:bg-slate-700 rounded-lg transition"
-                              >
-                                <Eye className="w-4 h-4 text-gray-400" />
-                              </button>
-                              <button 
-                                onClick={() => router.push(`/dashboards/admin/drivers/${driver.id}/edit`)}
-                                className="p-1 hover:bg-slate-700 rounded-lg transition"
-                              >
-                                <Edit className="w-4 h-4 text-gray-400" />
-                              </button>
-                            </div>
-                           </td>
-                         </tr>
+                      {filteredDrivers.slice(0, 5).map((driver) => (
+                        <DriverRow
+                          key={driver.id}
+                          driver={driver}
+                          onView={(id) => router.push(`/dashboards/admin/drivers/${id}`)}
+                          onEdit={(id) => router.push(`/dashboards/admin/drivers/${id}/edit`)}
+                        />
                       ))}
                     </tbody>
-                  </table>
+                   </table>
                 </div>
               ) : (
                 <div className="text-center py-8">
@@ -1177,10 +1318,10 @@ function DashboardContent() {
                 </div>
               )}
               
-              {drivers.length > 5 && (
+              {filteredDrivers.length > 5 && (
                 <div className="mt-4 text-center">
                   <Link href="/dashboards/admin/drivers" className="text-sm text-yellow-400 hover:text-yellow-300">
-                    View all {drivers.length} drivers →
+                    View all {filteredDrivers.length} drivers →
                   </Link>
                 </div>
               )}
@@ -1228,8 +1369,18 @@ function DashboardContent() {
           0% { transform: translateX(-100%); }
           100% { transform: translateX(100%); }
         }
+        @keyframes pulse {
+          0%, 100% { opacity: 0.5; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.05); }
+        }
+        .animate-pulse {
+          animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
         .animation-delay-2000 {
           animation-delay: 2s;
+        }
+        .will-change-transform {
+          will-change: transform;
         }
       `}</style>
     </div>
@@ -1240,104 +1391,12 @@ function DashboardFallback() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center">
       <div className="text-center">
-        <div className="w-12 h-12 border-4 border-yellow-400/20 border-t-yellow-400 rounded-full animate-spin mx-auto mb-4"></div>
+        <Loader2 className="w-12 h-12 text-yellow-400 animate-spin mx-auto mb-4" />
         <p className="text-gray-400">Loading...</p>
       </div>
     </div>
   );
 }
-
-// Helper Components
-interface StatCardProps {
-  label: string;
-  value: string;
-  icon: React.ElementType;
-  color: string;
-}
-
-const StatCard: React.FC<StatCardProps> = ({ label, value, icon: Icon, color }) => {
-  const colorClasses: Record<string, string> = {
-    amber: "text-amber-400 bg-amber-500/10 border-amber-500/30",
-    green: "text-green-400 bg-green-500/10 border-green-500/30",
-    blue: "text-blue-400 bg-blue-500/10 border-blue-500/30",
-    orange: "text-orange-400 bg-orange-500/10 border-orange-500/30",
-  };
-
-  return (
-    <div className={`bg-slate-800/50 backdrop-blur-sm border rounded-xl p-4 ${colorClasses[color]?.split(' ')[2] || 'border-yellow-500/30'}`}>
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-gray-400">{label}</span>
-        <Icon className={`w-4 h-4 ${colorClasses[color]?.split(' ')[0] || 'text-yellow-400'}`} />
-      </div>
-      <p className="text-2xl font-bold mt-2">{value}</p>
-    </div>
-  );
-};
-
-const StatusBadge = ({ status }: { status: string }) => {
-  const styles: Record<string, string> = {
-    ACTIVE: "bg-green-500/20 text-green-400 border border-green-500/30",
-    MAINTENANCE: "bg-amber-500/20 text-amber-400 border border-amber-500/30",
-    INACTIVE: "bg-rose-500/20 text-rose-400 border border-rose-500/30",
-    OUT_OF_SERVICE: "bg-red-500/20 text-red-400 border border-red-500/30"
-  };
-  
-  return (
-    <span className={`px-2 py-1 rounded-full text-xs font-medium ${styles[status] || styles.INACTIVE}`}>
-      {status?.replace(/_/g, ' ') || 'Unknown'}
-    </span>
-  );
-};
-
-const DriverStatusBadge = ({ status }: { status: string }) => {
-  const styles: Record<string, string> = {
-    ACTIVE: "bg-green-500/20 text-green-400 border border-green-500/30",
-    OFF_DUTY: "bg-gray-500/20 text-gray-400 border border-gray-500/30",
-    ON_LEAVE: "bg-amber-500/20 text-amber-400 border border-amber-500/30",
-    SUSPENDED: "bg-rose-500/20 text-rose-400 border border-rose-500/30",
-    TERMINATED: "bg-red-500/20 text-red-400 border border-red-500/30"
-  };
-  
-  return (
-    <span className={`px-2 py-1 rounded-full text-xs font-medium ${styles[status] || styles.OFF_DUTY}`}>
-      {status?.replace(/_/g, ' ') || 'Unknown'}
-    </span>
-  );
-};
-
-const getServiceStatus = (nextService?: string): string => {
-  if (!nextService) return "text-gray-500";
-  const daysUntil = Math.ceil((new Date(nextService).getTime() - new Date().getTime()) / (1000 * 3600 * 24));
-  if (daysUntil <= 0) return "text-red-400";
-  if (daysUntil <= 7) return "text-amber-400";
-  return "text-gray-400";
-};
-
-interface QuickActionButtonProps {
-  icon: React.ElementType;
-  label: string;
-  color: string;
-  onClick: () => void;
-}
-
-const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label, color, onClick }) => {
-  const colorClasses: Record<string, string> = {
-    yellow: "from-yellow-500/10 to-amber-600/5 border-yellow-500/20 text-yellow-400 hover:from-yellow-500/20 hover:to-amber-600/10",
-    blue: "from-blue-500/10 to-blue-600/5 border-blue-500/20 text-blue-400 hover:from-blue-500/20 hover:to-blue-600/10",
-    rose: "from-rose-500/10 to-rose-600/5 border-rose-500/20 text-rose-400 hover:from-rose-500/20 hover:to-rose-600/10",
-    purple: "from-purple-500/10 to-purple-600/5 border-purple-500/20 text-purple-400 hover:from-purple-500/20 hover:to-purple-600/10",
-  };
-
-  return (
-    <button
-      onClick={onClick}
-      className={`p-3 sm:p-4 bg-gradient-to-br ${colorClasses[color]} rounded-xl hover:shadow-lg transition-all group border`}
-    >
-      <Icon className={`w-4 h-4 sm:w-5 sm:h-5 mx-auto mb-1 sm:mb-2 group-hover:scale-110 transition`} />
-      <span className="text-[10px] sm:text-xs font-medium">{label}</span>
-    </button>
-  );
-};
 
 export default function AdminDashboard() {
   return (
